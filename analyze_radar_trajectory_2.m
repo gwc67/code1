@@ -37,51 +37,50 @@ function analyze_radar_trajectory_2(filePath)
         [nearestIdx, minDist] = findNearestNeighbors(pc, targets, 1);
     end
     
-        %% 5. 绘图准备 (已修复放大消失问题)
+    %% 5. 绘图准备
     figure('Color','w','Position',[100 100 1200 900]);
     
-    % ✅ 修复1: 将线宽从 0.8 提升到 1.5，防止缩放时线条低于光栅化阈值
-    plot3(x, y, z, '-', 'Color', [0.7 0.7 0.7], 'LineWidth', 1.5); 
+    % (1) 绘制完整的雷达轨迹线 (用灰色细线保证连续性)
+    plot3(x, y, z, '-', 'Color', [0.7 0.7 0.7], 'LineWidth', 0.8);
     hold on;
     
-    % 降采样提取箭头数据 (保持不变)
+    % (2) 💡核心：降采样绘制速度切线箭头 (quiver3)
+    % 为避免箭头过密，每隔 step 个点绘制一个箭头 (目标约 50~100 个箭头)
     numArrows = 80; 
     step = max(1, floor(length(x) / numArrows));
     idx_arrow = 1:step:length(x);
-    qx = x(idx_arrow); qy = y(idx_arrow); qz = z(idx_arrow);
-    qu = spd_x(idx_arrow); qv = spd_y(idx_arrow); 
     
-    % ✅ 修复2: Z分量赋予极小非零值，打破严格共面，防止OpenGL裁剪
-    qw = ones(size(qu)) * 1e-6;  
+    % 提取降采样后的起点坐标和速度分量
+    qx = x(idx_arrow);
+    qy = y(idx_arrow);
+    qz = z(idx_arrow);
+    qu = spd_x(idx_arrow); % X方向速度
+    qv = spd_y(idx_arrow); % Y方向速度
+    qw = zeros(size(qu));  % Z方向速度设为0 (传感器仅提供XY)
     
-    % ✅ 修复3: 强制关闭 AutoScale，使用固定缩放因子，避免缩放时箭头重算消失
-    %    同时设置 'Clipping','off' 禁止视锥体裁剪
-    hQuiver = quiver3(qx, qy, qz, qu, qv, qw, 1.0, ...  
-        'Color', 'b', 'LineWidth', 1.5, 'MaxHeadSize', 0.5, ...
-        'AutoScale', 'off', 'Clipping', 'off');
+    % 绘制3D速度矢量箭头
+    % 'AutoScale','off' 关闭自动缩放，使用真实速度值；或设为 'on' 让MATLAB自动调整长度
+    hQuiver = quiver3(qx, qy, qz, qu, qv, qw, ...
+        'Color', 'b', 'LineWidth', 1.5, 'MaxHeadSize', 0.5, 'AutoScale', 'on');
     
-    % 目标点与误差线绘制 (保持不变)
+    % (3) 绘制去重后的目标点
     scatter3(targets(:,1), targets(:,2), targets(:,3), ...
              120, 'r', 'filled', 'MarkerFaceAlpha', 0.8);
-    for i = 1:size(targets,1)
+    
+    % (4) 绘制误差连线与标注
+    for i = 1:nTargets
         idx = nearestIdx(i);
-        plot3([targets(i,1), x(idx)], [targets(i,2), y(idx)], ...
-              [targets(i,3), z(idx)], 'k--', 'LineWidth', 1.2, 'Clipping','off'); 
+        plot3([targets(i,1), x(idx)], ...
+              [targets(i,2), y(idx)], ...
+              [targets(i,3), z(idx)], ...
+              'k--', 'LineWidth', 1.2); 
+        
+        midX = (targets(i,1) + x(idx)) / 2;
+        midY = (targets(i,2) + y(idx)) / 2;
+        midZ = (targets(i,3) + z(idx)) / 2;
+        text(midX, midY, midZ, sprintf('%.3f', minDist(i)), ...
+             'FontSize', 8, 'Color', 'k', 'FontWeight', 'bold');
     end
-    
-    axis equal; grid on; box on;
-    % ✅ 额外保险: 手动扩展Z轴范围，确保XY平面上的元素不被裁切边界贴脸
-    zlim_current = zlim;
-    zRange = diff(zlim_current);
-    if zRange < 1e-3  % 如果Z轴范围极小(说明轨迹几乎在一个平面上)
-        zMid = mean(zlim_current);
-        zlim([zMid - 1, zMid + 1]); 
-    end
-    
-    xlabel('radar\_x'); ylabel('radar\_y'); zlabel('radar\_z');
-    title(['雷达轨迹(含速度切线) vs 目标点差异']);
-    % ... 图例代码同上一版，此处省略 ...
-    hold off;
     
     %% 6. 图面美化与标注
     axis equal; grid on; box on;
