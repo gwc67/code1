@@ -1,0 +1,16 @@
+data = readmatrix("3_kd_0_5.csv");
+
+data = readmatrix("3_kd_0_5.csv","Range",'A2:C60000');
+
+T = readtable("3_kd_0_5.csv");
+
+% time = T.Time;
+% signal = T.voltage;
+
+% uiimport("3_kd_0_5.csv") 导入波形
+
+figure;
+t = data(:,1);    %time radar_x
+y = data(:,2);    %radar_y
+
+
