@@ -61,7 +61,7 @@ function analyze_radar_trajectory_2(filePath)
     % 绘制3D速度矢量箭头
     % 'AutoScale','off' 关闭自动缩放，使用真实速度值；或设为 'on' 让MATLAB自动调整长度
     hQuiver = quiver3(qx, qy, qz, qu, qv, qw, ...
-        'Color', 'b', 'LineWidth', 1.5, 'MaxHeadSize', 0.5, 'AutoScale', 'on');
+        'Color', 'g', 'LineWidth', 1.5, 'MaxHeadSize', 0.5, 'AutoScale', 'on');
     
     % (3) 绘制去重后的目标点
     scatter3(targets(:,1), targets(:,2), targets(:,3), ...
@@ -79,7 +79,7 @@ function analyze_radar_trajectory_2(filePath)
         midY = (targets(i,2) + y(idx)) / 2;
         midZ = (targets(i,3) + z(idx)) / 2;
         text(midX, midY, midZ, sprintf('%.3f', minDist(i)), ...
-             'FontSize', 8, 'Color', 'k', 'FontWeight', 'bold');
+             'FontSize', 8, 'Color', 'y', 'FontWeight', 'bold');
     end
     
     %% 6. 图面美化与标注
