@@ -129,16 +129,19 @@ function [data, colNames] = loadRawCsv(csvPath)
     colNames(cellfun(@isempty, colNames)) = [];  % 去末尾空列
 
     % 读数据（第 3 行起）
-    % 注意：CSV 每行末尾有尾随逗号，导致实际列数比 colNames 多 1
-    % 使用 NumVariables+1 确保正确读取所有数据列
+    % 注意：CSV 每行末尾有尾随逗号，但 detectImportOptions 会自动处理
     nCols = length(colNames);
-    opts = detectImportOptions(csvPath, 'NumVariables', nCols + 1);
+    opts = detectImportOptions(csvPath, 'NumVariables', nCols);
     opts.DataLines = [3, Inf];
-    opts = setvartype(opts, 1:nCols+1, 'double');
-    rawData = readmatrix(csvPath, opts);
+    opts = setvartype(opts, 1:nCols, 'double');
+    data = readmatrix(csvPath, opts);
 
-    % 去掉最后一列（尾随逗号产生的空列）
-    data = rawData(:, 1:nCols);
+    % 验证：检查最后一列是否为 Tick（应该是递增的时间值）
+    % 如果最后一列全为 NaN 或异常值，说明列偏移了
+    lastCol = data(:, end);
+    if all(isnan(lastCol)) || (max(lastCol) < 1 && min(lastCol) > -1)
+        warning('最后一列异常，可能列索引有偏移。请检查 CSV 格式。');
+    end
 
     % 去全 NaN 行
     data(all(isnan(data), 2), :) = [];
@@ -170,9 +173,9 @@ function [dedupData, nDedup] = deduplicateByTick(data, tickCol)
         has_speed = any(abs(cmd_speed) > 0.5, 2);  % 哪些行有非零速度
 
         if any(has_speed)
-            % 有速度的行中，取最后一个（最新的状态）
+            % 有速度的行中，取第一个（飞控先输出带速度的行，再输出速度=0 的行）
             speedRows = groupRows(has_speed);
-            keepIdx(k) = speedRows(end);
+            keepIdx(k) = speedRows(1);
         else
             % 所有行速度都为零，取最后一行
             keepIdx(k) = groupRows(end);

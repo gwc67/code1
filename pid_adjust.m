@@ -6,3 +6,5 @@ addpath(fullfile(pwd,"function\",'track')); %添加路径
 addpath("filiter\");
 addpath("excel_csv\still_circle_waypoints\");
 
+my_flitter("excel_csv/still_circle.csv")
+
