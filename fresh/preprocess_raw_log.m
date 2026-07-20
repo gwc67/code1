@@ -14,7 +14,9 @@ function result = preprocess_raw_log(rawCsvPath, options)
 %       options.include_radar_speed - true/false, 是否包含 U10-U12 雷达速度
 %       options.include_yaw   - true/false, 是否包含 YAW 相关列
 %       options.invalid_values - 哨兵值列表，默认 [] (不替换，保留原始数据)
-%                                设为 [-32768, -1] 会替换为 NaN 并添加 VALID_X/Y/Z 标志列
+%                                设为 [-32768, -1] 会替换为 NaN
+%       options.uniform_dt     - 均匀时间间隔 (s)，默认 0.01 (10ms)
+%                                设为 [] 表示不补齐，保留原始时间点
 %
 % 输出:
 %   result - struct:
@@ -101,6 +103,14 @@ function result = preprocess_raw_log(rawCsvPath, options)
         fprintf('[5/6] 全时间段（未指定过滤）\n');
     end
 
+    %% 5.5 补齐到均匀时间网格
+    if ~isempty(opts.uniform_dt) && opts.uniform_dt > 0
+        fprintf('[5.5/6] 补齐到均匀 dt = %.4f s（去重 + 前值填充缺失点）...\n', opts.uniform_dt);
+        [cleanMat, fillStats] = fillToUniformGrid(cleanMat, opts.uniform_dt);
+        fprintf('   补齐后: %d 行 (填充了 %d 个缺失时间点)\n', ...
+            size(cleanMat, 1), fillStats.filled);
+    end
+
     %% 6. 检测雷达刷新行 + 保存
     fprintf('[6/6] 检测雷达刷新 + 保存...\n');
     radar_sync_mask = detectRadarRefresh(cleanMat, colNames);
@@ -138,6 +148,7 @@ function opts = fillDefaultOptions(userOpts)
     opts.include_radar_speed = false;
     opts.include_yaw = false;
     opts.invalid_values = [];  % 默认保留原始数据（不替换）
+    opts.uniform_dt = 0.01;    % 均匀时间间隔 (s)，默认 10ms；设为 [] 表示不补齐
 
     % 覆盖用户指定的字段
     flds = fieldnames(userOpts);
@@ -386,6 +397,56 @@ function mask = detectRadarRefresh(mat, colNames)
             mask(k) = true;
         end
     end
+end
+
+
+%% =========================================================================
+%  补齐到均匀时间网格（去重 + 前值填充缺失点）
+% =========================================================================
+function [matOut, stats] = fillToUniformGrid(mat, dt_target)
+% FILLTOUNIFORMGRID  把数据补齐到均匀 dt 网格
+%   第 1 列必须是 T_REL（相对时间）
+%   步骤:
+%     1. 构建目标均匀时间向量
+%     2. 对每个目标时间点，用"最近的之前数据"填充（前值填充 / zero-order hold）
+%   注意：不去重！即使相邻行数据完全相同也保留，保证 0.01s 采样率不丢失时间点
+    N = size(mat, 1);
+    if N == 0
+        matOut = mat;
+        stats.filled = 0;
+        stats.dedup_removed = 0;
+        stats.final_rows = 0;
+        return;
+    end
+
+    t_orig = mat(:, 1);
+
+    %% Step 1: 构建目标均匀时间向量
+    t_start = t_orig(1);
+    t_end = t_orig(end);
+    % 用 round 避免浮点误差导致的多余/缺失点
+    nSteps = round((t_end - t_start) / dt_target);
+    t_uniform = t_start + (0:nSteps)' * dt_target;
+
+    %% Step 2: 前值填充
+    % 对每个 t_uniform(k)，找最大的 j 使 t_orig(j) <= t_uniform(k)
+    N_uniform = length(t_uniform);
+    idx = zeros(N_uniform, 1);
+    j = 1;
+    for k = 1:N_uniform
+        while j < N && t_orig(j+1) <= t_uniform(k) + 1e-9
+            j = j + 1;
+        end
+        idx(k) = j;
+    end
+
+    matOut = mat(idx, :);
+    matOut(:, 1) = t_uniform;  % 时间列用均匀值
+
+    % 统计：被填充的点数 = 均匀点数 - 原始点数
+    stats.filled = N_uniform - N;
+    stats.dedup_removed = 0;
+    stats.final_rows = N_uniform;
 end
 
 
