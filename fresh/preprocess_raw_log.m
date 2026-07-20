@@ -13,7 +13,8 @@ function result = preprocess_raw_log(rawCsvPath, options)
 %       options.output_dir    - 输出目录，默认与 raw 同目录
 %       options.include_radar_speed - true/false, 是否包含 U10-U12 雷达速度
 %       options.include_yaw   - true/false, 是否包含 YAW 相关列
-%       options.invalid_values - 哨兵值列表，默认 [-32768, -1]
+%       options.invalid_values - 哨兵值列表，默认 [] (不替换，保留原始数据)
+%                                设为 [-32768, -1] 会替换为 NaN 并添加 VALID_X/Y/Z 标志列
 %
 % 输出:
 %   result - struct:
@@ -66,11 +67,16 @@ function result = preprocess_raw_log(rawCsvPath, options)
     fprintf('   Tick 范围: %.3f - %.3f s (相对: %.3f - %.3f s)\n', ...
         tick_abs(first_positive), tick_abs(end), t_rel(first_positive), t_rel(end));
 
-    %% 3. 替换无效值为 NaN
-    fprintf('[3/6] 替换无效值 (%s) 为 NaN...\n', mat2str(opts.invalid_values));
-    cleanData = replaceInvalidValues(rawData, opts.invalid_values);
-    nan_pct = sum(isnan(cleanData(:))) / numel(cleanData) * 100;
-    fprintf('   NaN 占比: %.2f%%\n', nan_pct);
+    %% 3. 处理哨兵值
+    if isempty(opts.invalid_values)
+        fprintf('[3/6] 保留原始数据（未指定哨兵值替换）\n');
+        cleanData = rawData;
+    else
+        fprintf('[3/6] 替换哨兵值 (%s) 为 NaN...\n', mat2str(opts.invalid_values));
+        cleanData = replaceInvalidValues(rawData, opts.invalid_values);
+        nan_pct = sum(isnan(cleanData(:))) / numel(cleanData) * 100;
+        fprintf('   NaN 占比: %.2f%%\n', nan_pct);
+    end
 
     %% 4. 构造 clean 数据（13 列核心）
     fprintf('[4/6] 构造 clean 数据...\n');
@@ -131,7 +137,7 @@ function opts = fillDefaultOptions(userOpts)
     opts.output_dir = '';
     opts.include_radar_speed = false;
     opts.include_yaw = false;
-    opts.invalid_values = [-32768, -1];
+    opts.invalid_values = [];  % 默认保留原始数据（不替换）
 
     % 覆盖用户指定的字段
     flds = fieldnames(userOpts);
@@ -442,29 +448,14 @@ function writeCleanCsv(path, mat, colNames)
     if isempty(path)
         error('writeCleanCsv: 文件路径为空');
     end
-    % 写 CSV：首行列名
-    fid = fopen(path, 'w');
-    if fid == -1
-        error('无法写入文件: %s\n当前工作目录: %s', path, pwd);
+
+    % 构造 table（保留所有原始数值，包括 -32768、-1 等哨兵值）
+    varData = cell(1, size(mat, 2));
+    for c = 1:size(mat, 2)
+        varData{c} = mat(:, c);
     end
-    fprintf(fid, '%s', colNames{1});
-    for i = 2:length(colNames)
-        fprintf(fid, ',%s', colNames{i});
-    end
-    fprintf(fid, '\n');
-    % 写数据（NaN 写成空字符串，便于下游识别）
-    for r = 1:size(mat, 1)
-        for c = 1:size(mat, 2)
-            if c > 1
-                fprintf(fid, ',');
-            end
-            if isnan(mat(r, c))
-                fprintf(fid, '');  % NaN 输出为空
-            else
-                fprintf(fid, '%.6f', mat(r, c));
-            end
-        end
-        fprintf(fid, '\n');
-    end
-    fclose(fid);
+    T = table(varData{:}, 'VariableNames', colNames);
+
+    % writetable 会保留所有数值（不会把任何值变成空）
+    writetable(T, path);
 end
