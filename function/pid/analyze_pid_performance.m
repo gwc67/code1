@@ -222,7 +222,7 @@ end
 
 function merged = mergePidParams(userParams)
 % MERGEPIDPARAMS  把用户部分覆盖的 struct 与 C 代码默认值合并
-    defaults = getDefaultPidParams();
+    defaults = getDefaultPidParams(); %怪不得这个函数写在它的头上
     merged = defaults;
     if isempty(userParams)
         return;
@@ -1001,7 +1001,7 @@ function plotAnalysis(result, pid, radar_pos, target_pos, cmd_vel, t, dt)
         if hasPidVal && isfield(result.pid_validation, axis_names{ax})
             cmd_sim = result.pid_validation.(axis_names{ax}).cmd_vel_sim;
             plot(t, cmd_vel(:,ax), 'b-', 'LineWidth', 1.5); hold on;
-            plot(t, cmd_sim, 'r--', 'LineWidth', 1.5);
+            plot(t, cmd_sim, 'r-', 'LineWidth', 1.5);
             nrmse = result.pid_validation.(axis_names{ax}).nrmse;
             title(sprintf('%s 轴 cmd_vel: 实际 (蓝) vs MATLAB PID 仿真 (红)  NRMSE=%.1f%%', ...
                 axis_names{ax}, nrmse*100));
