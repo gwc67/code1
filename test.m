@@ -6,6 +6,7 @@
 addpath("filiter\")
 
 pre_log("./excel_csv/still_circle.csv")
+split_waypoints("./excel_csv/still_circle_filtered.csv")
 % analyze_pid_performance("./excel_csv/still_circle_radar_sync.csv");
 % plot_radar_3d_optimized("./excel_csv/still_circle_radar_sync.csv");
 

@@ -1000,10 +1000,10 @@ function plotAnalysis(result, pid, radar_pos, target_pos, cmd_vel, t, dt)
         subplot(3, 3, (ax-1)*3 + 2);
         if hasPidVal && isfield(result.pid_validation, axis_names{ax})
             cmd_sim = result.pid_validation.(axis_names{ax}).cmd_vel_sim;
-            plot(t, cmd_vel(:,ax), 'k-', 'LineWidth', 1.5); hold on;
+            plot(t, cmd_vel(:,ax), 'b-', 'LineWidth', 1.5); hold on;
             plot(t, cmd_sim, 'r--', 'LineWidth', 1.5);
             nrmse = result.pid_validation.(axis_names{ax}).nrmse;
-            title(sprintf('%s 轴 cmd_vel: 实际 (黑) vs MATLAB PID 仿真 (红)  NRMSE=%.1f%%', ...
+            title(sprintf('%s 轴 cmd_vel: 实际 (蓝) vs MATLAB PID 仿真 (红)  NRMSE=%.1f%%', ...
                 axis_names{ax}, nrmse*100));
         else
             plot(t, cmd_vel(:,ax), 'k-', 'LineWidth', 1.5);
