@@ -7,8 +7,6 @@
 
 figure;
 subplot(2,1,1);plot(t,ERROR_X);title("输入激励");
-subplot(2,1,2);plot(t,CMD_SPEED_X);title("系统输出y");
-
-data_id = iddata(CMD_SPEED_X,ERROR_X,0.1);
+subplot(2,1,2);plot(t,out)
 
 ident
