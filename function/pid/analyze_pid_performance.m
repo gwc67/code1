@@ -55,80 +55,116 @@ function result = analyze_pid_performance(csvPath, pidParams, tuningMode)
     %% S4: 数据质量门控
     fprintf('\n[2/6] 数据质量检查...\n');
     quality = checkDataQuality(radar_pos, target_pos, cmd_vel, dt);
-    if ~quality.sufficient
-        fprintf('   ⚠️ 数据激励不足，跳过辨识与调参，仅输出原始数据统计\n');
-        result = buildPartialResult(quality, pid);
-        saveResult(result, csvPath);
-        return;
-    end
 
-    %% 准备每轴的辨识与调参
+    %% 准备结果结构
     result = struct();
     result.recommended = struct();
     result.identified_plant = struct();
     result.metrics = struct();
     result.model_fit.NRMSE = struct();
+    result.pid_validation = struct();   % Part A: PID 仿真对比
+    result.steady_state = struct();      % 稳态分析
     axis_names = {'X', 'Y', 'Z'};
 
+    %% ========== Part A: PID 仿真对比（所有数据都能做）==========
+    fprintf('\n[3/6] PID 仿真对比 (MATLAB 模拟 vs 实际 cmd_vel)...\n');
     for ax = 1:3
         ax_name = axis_names{ax};
-        fprintf('\n========== %s 轴分析 ==========\n', ax_name);
         pid_ax = pid.(ax_name);
 
-        try
-            %% S5 + S6: 被控对象辨识
-            fprintf('\n[3/6] 辨识被控对象 G(s)...\n');
-            [plant_tf, plant_params, nrmse] = identifyPlant(...
-                cmd_vel(:, ax), radar_pos(:, ax), dt, pid_ax);
-            fprintf('   G(s) = %.3f * e^(-%.3fs) / (s * (%.3fs + 1))\n', ...
-                plant_params.K, plant_params.tau, plant_params.T);
-            fprintf('   物理含义: K=速度增益, T=内环时间常数, tau=纯延迟\n');
-            fprintf('   模型拟合精度 NRMSE = %.1f%%', nrmse*100);
-            if nrmse < 0.15
-                fprintf(' ✅\n');
-            elseif nrmse < 0.30
-                fprintf(' ⚠️ (中等)\n');
-            else
-                fprintf(' ❌ (较差，建议检查数据质量或模型结构)\n');
+        % 用 logged radar_pos 作为测量值，target_pos 作为设定值
+        % 跑 MATLAB 版 PID，得到 cmd_vel_sim
+        state = [];
+        cmd_vel_sim = zeros(N, 1);
+        for k = 1:N
+            setpoint = target_pos(k, ax);
+            measurement = radar_pos(k, ax);
+            if isnan(setpoint) || isnan(measurement)
+                if k > 1
+                    cmd_vel_sim(k) = cmd_vel_sim(k-1);  % 保持上一拍
+                end
+                continue;
             end
+            [cmd_vel_sim(k), state] = pidSimulate(pid_ax, setpoint, measurement, state, dt);
+        end
 
-            %% S7 + S8: 调参推荐 (IMC + ITAE)
-            fprintf('\n[4/6] 计算调参建议...\n');
-            [recommended, metrics] = tunePid(plant_params, pid_ax, tuningMode, dt);
-            fprintf('   当前参数: Kp=%.3f, Ki=%.3f, Kd=%.3f\n', ...
-                pid_ax.Kp_base, pid_ax.Ki_base, pid_ax.Kd_base);
-            fprintf('   建议参数: Kp=%.3f, Ki=%.3f, Kd=%.3f\n', ...
-                recommended.Kp, recommended.Ki, recommended.Kd);
+        % 对比：仿真 vs 实际
+        valid = ~isnan(cmd_vel(:,ax)) & ~isnan(cmd_vel_sim);
+        if sum(valid) > 0
+            err_sim = cmd_vel_sim(valid) - cmd_vel(valid);
+            nrmse_sim = sqrt(mean(err_sim.^2)) / (max(cmd_vel(valid)) - min(cmd_vel(valid)) + 1e-6);
+            corr_sim = corr(cmd_vel_sim(valid), cmd_vel(valid));
+        else
+            nrmse_sim = NaN;
+            corr_sim = NaN;
+        end
 
-            %% 收集结果
-            result.recommended.(ax_name) = recommended;
-            result.identified_plant.(ax_name) = plant_tf;
-            result.identified_plant.([ax_name '_params']) = plant_params;
-            result.metrics.(ax_name) = metrics;
-            result.model_fit.NRMSE.(ax_name) = nrmse;
-        catch err
-            fprintf('   ❌ %s 轴分析失败: %s\n', ax_name, err.message);
-            fprintf('   跳过该轴的推荐，继续其他轴...\n');
+        result.pid_validation.(ax_name).cmd_vel_sim = cmd_vel_sim;
+        result.pid_validation.(ax_name).nrmse = nrmse_sim;
+        result.pid_validation.(ax_name).correlation = corr_sim;
+
+        fprintf('   %s 轴: NRMSE = %.1f%%, 相关系数 = %.3f\n', ax_name, nrmse_sim*100, corr_sim);
+        if nrmse_sim < 0.15
+            fprintf('      ✅ MATLAB PID 仿真与 C 代码输出高度吻合\n');
+        elseif nrmse_sim < 0.40
+            fprintf('      ⚠️ 有一定差异（可能是 C 代码自适应/前馈的细微差别）\n');
+        else
+            fprintf('      ❌ 差异较大 —— 检查 C 代码是否有未复刻的逻辑\n');
         end
     end
 
-    %% 检查是否全部失败
-    successCount = 0;
+    %% ========== 稳态分析（所有数据都能做）==========
+    fprintf('\n[4/6] 稳态分析...\n');
     for ax = 1:3
-        if isfield(result.recommended, axis_names{ax})
-            successCount = successCount + 1;
+        ax_name = axis_names{ax};
+        pid_ax = pid.(ax_name);
+
+        cmd_vel_sim_ax = result.pid_validation.(ax_name).cmd_vel_sim;
+        ss = analyzeSteadyState(radar_pos(:,ax), target_pos(:,ax), ...
+                                cmd_vel(:,ax), cmd_vel_sim_ax, pid_ax, dt);
+        result.steady_state.(ax_name) = ss;
+
+        fprintf('   %s 轴:\n', ax_name);
+        fprintf('      平均误差: %.3f | 最大误差: %.3f\n', ss.mean_error, ss.max_error);
+        fprintf('      有效 Kp (从数据估): %.3f (设定: %.3f)\n', ss.Kp_eff, pid_ax.Kp_base);
+        fprintf('      控制量 std: %.3f | 控制量范围: [%.2f, %.2f]\n', ...
+            ss.cmd_std, ss.cmd_min, ss.cmd_max);
+        if ~isnan(ss.small_overshoot)
+            fprintf('      小扰动超调: %.1f%%\n', ss.small_overshoot*100);
         end
     end
-    if successCount == 0
-        fprintf('\n');
-        fprintf('⚠️  ⚠️  ⚠️  所有轴辨识/调参均失败，无法给出参数建议 ⚠️  ⚠️  ⚠️\n');
-        fprintf('常见原因:\n');
-        fprintf('  1. 数据激励不足 (cmd_vel 几乎无变化，如悬停/缓慢移动)\n');
-        fprintf('  2. radar_pos 几乎不变 (无人机未实际移动)\n');
-        fprintf('  3. 数据时长过短 (< 几秒)\n');
-        fprintf('建议: 采集包含明显阶跃变化的飞行数据 (如快速移动、方向变化)\n');
+
+    %% ========== Part B: 被控对象辨识 + 调参（仅当激励足够时）==========
+    if quality.sufficient
+        fprintf('\n[5/6] 被控对象辨识与调参（数据激励充足）...\n');
+        for ax = 1:3
+            ax_name = axis_names{ax};
+            pid_ax = pid.(ax_name);
+
+            try
+                [plant_tf, plant_params, nrmse] = identifyPlant(...
+                    cmd_vel(:, ax), radar_pos(:, ax), dt, pid_ax);
+                fprintf('   %s 轴 G(s) = %.3f * e^(-%.3fs) / (s * (%.3fs + 1)), NRMSE=%.1f%%\n', ...
+                    ax_name, plant_params.K, plant_params.tau, plant_params.T, nrmse*100);
+
+                [recommended, metrics] = tunePid(plant_params, pid_ax, tuningMode, dt);
+                fprintf('      建议: Kp=%.3f, Ki=%.3f, Kd=%.3f\n', ...
+                    recommended.Kp, recommended.Ki, recommended.Kd);
+
+                result.recommended.(ax_name) = recommended;
+                result.identified_plant.(ax_name) = plant_tf;
+                result.identified_plant.([ax_name '_params']) = plant_params;
+                result.metrics.(ax_name) = metrics;
+                result.model_fit.NRMSE.(ax_name) = nrmse;
+            catch err
+                fprintf('   ❌ %s 轴辨识失败: %s\n', ax_name, err.message);
+            end
+        end
     else
-        fprintf('\n✅ 成功分析 %d/3 个轴\n', successCount);
+        fprintf('\n[5/6] 跳过被控对象辨识（数据激励不足，仅使用稳态分析）\n');
+        for i = 1:length(quality.warnings)
+            fprintf('   ⚠️ %s\n', quality.warnings{i});
+        end
     end
 
     %% S1: 控制台报告 + 图表
@@ -800,6 +836,71 @@ end
 
 
 %% =========================================================================
+%  稳态分析（适用于定点飞行等小扰动场景）
+% =========================================================================
+function ss = analyzeSteadyState(radar_pos_ax, target_pos_ax, cmd_vel_ax, cmd_vel_sim, pid_ax, dt)
+% ANALYZESTEADYSTATE  从稳态/小扰动数据中提取 Kp、超调等指标
+    error_ax = target_pos_ax - radar_pos_ax;
+    valid = ~isnan(error_ax) & ~isnan(cmd_vel_ax);
+    err = error_ax(valid);
+    cmd = cmd_vel_ax(valid);
+    cmd_sim = cmd_vel_sim(valid);
+
+    % 基础统计
+    ss.mean_error = mean(abs(err));
+    ss.max_error = max(abs(err));
+    ss.cmd_std = std(cmd);
+    ss.cmd_min = min(cmd);
+    ss.cmd_max = max(cmd);
+
+    % 从数据估计有效 Kp：在小误差区间（|err| <= 5）内，cmd ≈ Kp * err
+    % 用线性回归 cmd = Kp_eff * err 估计
+    small_idx = abs(err) <= 5 & abs(err) > 0.1;  % 排除 0 附近（除零风险）和超大误差
+    if sum(small_idx) > 10
+        X = err(small_idx);
+        Y = cmd(small_idx);
+        % 稳健线性回归（忽略 I 和 D 项的贡献，仅估 P 项）
+        Kp_eff = (X' * Y) / (X' * X + 1e-10);
+        ss.Kp_eff = Kp_eff;
+    else
+        ss.Kp_eff = NaN;
+    end
+
+    % 小扰动超调估计：找到误差过零点，看之后反向超调多大
+    ss.small_overshoot = estimateSmallOvershoot(err, dt);
+end
+
+function overshoot = estimateSmallOvershoot(err, dt)
+% ESTIMATESMALLOVERSHOOT  从小扰动中估计超调
+%   思路：找误差从正到负或从负到正的过零点，看之后最大反向偏置
+    N = length(err);
+    overshoots = [];
+    % 找过零点
+    for k = 2:N
+        if err(k-1) * err(k) < 0  % 异号 = 过零
+            % 之后 2 秒内的最大反向误差
+            window = min(N, k + round(2/dt));
+            after = err(k:window);
+            if isempty(after), continue; end
+            % 过零前误差方向
+            sign_before = sign(err(k-1));
+            % 之后的最大反向偏离
+            max_reverse = max(-sign_before * after);
+            if max_reverse > 0.1  % 排除噪声
+                overshoots(end+1) = max_reverse;
+            end
+        end
+    end
+    if ~isempty(overshoots)
+        % 相对超调 = 平均反向超调 / 过零前平均|误差|
+        overshoot = median(overshoots);
+    else
+        overshoot = NaN;
+    end
+end
+
+
+%% =========================================================================
 %  S1: 输出
 % =========================================================================
 function result = buildPartialResult(quality, pid)
@@ -816,31 +917,64 @@ function printConsoleReport(result, pid, tuningMode)
     fprintf('╚══════════════════════════════════════════════════════════╝\n');
     fprintf('调参档位: %s\n', tuningMode);
     axis_names = {'X', 'Y', 'Z'};
+
+    hasPidVal = isfield(result, 'pid_validation') && ~isempty(result.pid_validation);
+    hasSteadyState = isfield(result, 'steady_state') && ~isempty(result.steady_state);
     hasRecommended = isfield(result, 'recommended') && ~isempty(result.recommended);
     hasMetrics = isfield(result, 'metrics') && ~isempty(result.metrics);
+
     for ax = 1:3
         ax_name = axis_names{ax};
-        fprintf('\n---------- %s 轴 ----------\n', ax_name);
-        if ~hasRecommended || ~isfield(result.recommended, ax_name)
-            fprintf('   (跳过 —— 该轴辨识或调参失败)\n');
-            continue;
-        end
-        rec = result.recommended.(ax_name);
-        met = struct();
-        if hasMetrics && isfield(result.metrics, ax_name)
-            met = result.metrics.(ax_name);
-        end
+        fprintf('\n========== %s 轴 ==========\n', ax_name);
         cur = pid.(ax_name);
         fprintf('  当前参数: Kp=%.3f  Ki=%.3f  Kd=%.3f\n', ...
             cur.Kp_base, cur.Ki_base, cur.Kd_base);
-        fprintf('  建议参数: Kp=%.3f  Ki=%.3f  Kd=%.3f\n', ...
-            rec.Kp, rec.Ki, rec.Kd);
-        fprintf('  预期性能:\n');
-        fprintf('    超调量:       %.1f%%\n', met.overshoot*100);
-        fprintf('    Settling:     %.2f s\n', met.settling_time);
-        fprintf('    稳态误差:     %.4f\n', met.steady_state_error);
-        fprintf('    控制量峰值:   %.2f / %d\n', met.peak_control, cur.output_max);
-        fprintf('    相位裕度:     %.1f°\n', met.phase_margin);
+
+        %% Part A: PID 仿真对比
+        if hasPidVal && isfield(result.pid_validation, ax_name)
+            pv = result.pid_validation.(ax_name);
+            fprintf('  [PID 仿真对比] (MATLAB PID 复刻 vs C 代码输出)\n');
+            fprintf('    NRMSE = %.1f%%, 相关系数 = %.3f\n', pv.nrmse*100, pv.correlation);
+            if pv.nrmse < 0.15
+                fprintf('    ✅ 仿真与实际高度吻合\n');
+            elseif pv.nrmse < 0.40
+                fprintf('    ⚠️ 有一定差异（可能因自适应/前馈细微差别）\n');
+            else
+                fprintf('    ❌ 差异较大 —— 检查 C 代码是否有未复刻逻辑\n');
+            end
+        end
+
+        %% 稳态分析
+        if hasSteadyState && isfield(result.steady_state, ax_name)
+            ss = result.steady_state.(ax_name);
+            fprintf('  [稳态分析]\n');
+            fprintf('    平均误差: %.3f | 最大误差: %.3f\n', ss.mean_error, ss.max_error);
+            fprintf('    有效 Kp (从数据估): %.3f (设定: %.3f)\n', ss.Kp_eff, cur.Kp_base);
+            if abs(ss.Kp_eff - cur.Kp_base) / (cur.Kp_base + 1e-10) > 0.3
+                fprintf('    ⚠️ 有效 Kp 与设定值偏差 >30%%, 可能积分/微分项贡献显著\n');
+            end
+            fprintf('    控制量 std: %.3f | 范围: [%.2f, %.2f] / ±%d\n', ...
+                ss.cmd_std, ss.cmd_min, ss.cmd_max, cur.output_max);
+            if ~isnan(ss.small_overshoot)
+                fprintf('    小扰动超调: %.1f%%\n', ss.small_overshoot*100);
+                if ss.small_overshoot > 0.20
+                    fprintf('    ⚠️ 超调 > 20%%, 考虑增大 Kd 以增强阻尼\n');
+                end
+            end
+        end
+
+        %% Part B: 调参建议（如果辨识成功）
+        if hasRecommended && isfield(result.recommended, ax_name)
+            rec = result.recommended.(ax_name);
+            met = struct();
+            if hasMetrics && isfield(result.metrics, ax_name)
+                met = result.metrics.(ax_name);
+            end
+            fprintf('  [调参建议] (基于被控对象辨识)\n');
+            fprintf('    建议: Kp=%.3f, Ki=%.3f, Kd=%.3f\n', rec.Kp, rec.Ki, rec.Kd);
+            fprintf('    预期: 超调=%.1f%%, settling=%.2fs, 相位裕度=%.1f°\n', ...
+                met.overshoot*100, met.settling_time, met.phase_margin);
+        end
     end
 end
 
@@ -848,91 +982,58 @@ function plotAnalysis(result, pid, radar_pos, target_pos, cmd_vel, t, dt)
     figure('Name', 'PID 性能分析', 'Color', 'w', 'Position', [50, 50, 1400, 900]);
     axis_names = {'X', 'Y', 'Z'};
     colors = lines(3);
+    hasPidVal = isfield(result, 'pid_validation') && ~isempty(result.pid_validation);
 
-    %% 1. 数据概览
-    subplot(3,2,1);
+    %% 第一行：三轴位置跟踪
     for ax = 1:3
-        hold on;
-        plot(t, target_pos(:,ax), '--', 'Color', colors(ax,:));
-        plot(t, radar_pos(:,ax), '-', 'Color', colors(ax,:));
-    end
-    title('数据概览: 目标 vs 实际');
-    xlabel('时间 (s)'); ylabel('位置');
-    legend('X target', 'X radar', 'Y target', 'Y radar', 'Z target', 'Z radar', ...
-           'Location', 'best');
-    grid on;
-
-    %% 2. 被控对象开环验证（用 logged cmd_vel 作为输入）
-    subplot(3,2,2);
-    hasPlant = isfield(result, 'identified_plant') && ~isempty(result.identified_plant);
-    legendLabels = {};
-    for ax = 1:3
-        if hasPlant && isfield(result.identified_plant, axis_names{ax})
-            p = result.identified_plant.(axis_names{ax});
-            y_sim = lsim(p, cmd_vel(:,ax), t);
-            hold on;
-            plot(t, radar_pos(:,ax), '-', 'Color', colors(ax,:));
-            plot(t, y_sim, '--', 'Color', colors(ax,:), 'LineWidth', 2);
-            legendLabels{end+1} = [axis_names{ax}, ' actual'];
-            legendLabels{end+1} = [axis_names{ax}, ' model'];
-        end
-    end
-    title('被控对象开环验证: 实际 vs 模型预测 (logged cmd_vel 输入)');
-    if ~isempty(legendLabels)
-        legend(legendLabels, 'Location', 'best');
-    else
-        plot(0, 0);  % 占位
-        title('被控对象开环验证 (无辨识结果)');
-    end
-    grid on;
-
-    %% 3. Bode 图
-    subplot(3,2,3);
-    sys_list = {};
-    for ax = 1:3
-        if hasPlant && isfield(result.identified_plant, axis_names{ax})
-            sys_list{end+1} = result.identified_plant.(axis_names{ax});
-        end
-    end
-    if ~isempty(sys_list)
-        bode(sys_list{:});
-        title('被控对象 Bode 图');
-    else
-        plot(0, 0);  % 占位
-        title('被控对象 Bode 图 (无辨识结果)');
-    end
-
-    %% 4-6. 每轴闭环阶跃响应对比
-    hasRecommended = isfield(result, 'recommended') && ~isempty(result.recommended);
-    for ax = 1:3
-        ax_name = axis_names{ax};
-        if ~hasRecommended || ~isfield(result.recommended, ax_name)
-            continue;
-        end
-        p = result.identified_plant.(ax_name);
-        rec = result.recommended.(ax_name);
-        cur = pid.(ax_name);
-
-        % 当前参数闭环
-        C_cur = tf([cur.Kd_base, cur.Kp_base, cur.Ki_base], [1, 0]);
-        T_cur = feedback(C_cur * p, 1);
-        % 建议参数闭环
-        C_rec = tf([rec.Kd, rec.Kp, rec.Ki], [1, 0]);
-        T_rec = feedback(C_rec * p, 1);
-
-        t_step = 0:dt:10;
-        y_cur = step(T_cur, t_step);
-        y_rec = step(T_rec, t_step);
-
-        subplot(3,2,ax+3);
-        plot(t_step, y_cur, 'r-', 'LineWidth', 1.5); hold on;
-        plot(t_step, y_rec, 'b-', 'LineWidth', 1.5);
-        plot(t_step, ones(size(t_step)), 'k--');
-        plot(t_step, 1.05*ones(size(t_step)), 'g:');  % 5% 超调线
-        title(sprintf('%s 轴闭环阶跃响应', ax_name));
-        legend('当前参数', '建议参数', '参考', '5%超调线', 'Location', 'best');
+        subplot(3, 3, (ax-1)*3 + 1);
+        plot(t, target_pos(:,ax), 'r--', 'LineWidth', 1.5); hold on;
+        plot(t, radar_pos(:,ax), 'b-', 'LineWidth', 1.5);
+        title(sprintf('%s 轴位置跟踪', axis_names{ax}));
+        xlabel('时间 (s)'); ylabel('位置');
+        legend('目标', '实际', 'Location', 'best');
         grid on;
     end
+
+    %% 第二行：MATLAB PID 仿真 vs 实际 cmd_vel （核心对比图）
+    for ax = 1:3
+        subplot(3, 3, (ax-1)*3 + 2);
+        if hasPidVal && isfield(result.pid_validation, axis_names{ax})
+            cmd_sim = result.pid_validation.(axis_names{ax}).cmd_vel_sim;
+            plot(t, cmd_vel(:,ax), 'k-', 'LineWidth', 1.5); hold on;
+            plot(t, cmd_sim, 'r--', 'LineWidth', 1.5);
+            nrmse = result.pid_validation.(axis_names{ax}).nrmse;
+            title(sprintf('%s 轴 cmd_vel: 实际 (黑) vs MATLAB PID 仿真 (红)  NRMSE=%.1f%%', ...
+                axis_names{ax}, nrmse*100));
+        else
+            plot(t, cmd_vel(:,ax), 'k-', 'LineWidth', 1.5);
+            title(sprintf('%s 轴 cmd_vel (无仿真结果)', axis_names{ax}));
+        end
+        xlabel('时间 (s)'); ylabel('cmd_vel');
+        if hasPidVal
+            legend('实际 cmd_vel', 'MATLAB PID 仿真', 'Location', 'best');
+        end
+        grid on;
+    end
+
+    %% 第三行：误差信号
+    for ax = 1:3
+        subplot(3, 3, (ax-1)*3 + 3);
+        err = target_pos(:,ax) - radar_pos(:,ax);
+        plot(t, err, 'Color', colors(ax,:), 'LineWidth', 1.2);
+        % 稳态误差带
+        hold on;
+        if isfield(result, 'steady_state') && isfield(result.steady_state, axis_names{ax})
+            ss = result.steady_state.(axis_names{ax});
+            yline(ss.mean_error, 'g--', 'LineWidth', 1);
+            yline(-ss.mean_error, 'g--', 'LineWidth', 1);
+        end
+        title(sprintf('%s 轴误差 (目标 - 实际)', axis_names{ax}));
+        xlabel('时间 (s)'); ylabel('误差');
+        grid on;
+    end
+
+    sgtitle('PID 性能分析: 仿真 vs 实际对比', 'FontSize', 14, 'FontWeight', 'bold');
 end
 
 function saveResult(result, csvPath)
