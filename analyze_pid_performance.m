@@ -64,6 +64,10 @@ function result = analyze_pid_performance(csvPath, pidParams, tuningMode)
 
     %% 准备每轴的辨识与调参
     result = struct();
+    result.recommended = struct();
+    result.identified_plant = struct();
+    result.metrics = struct();
+    result.model_fit.NRMSE = struct();
     axis_names = {'X', 'Y', 'Z'};
 
     for ax = 1:3
@@ -106,6 +110,25 @@ function result = analyze_pid_performance(csvPath, pidParams, tuningMode)
             fprintf('   ❌ %s 轴分析失败: %s\n', ax_name, err.message);
             fprintf('   跳过该轴的推荐，继续其他轴...\n');
         end
+    end
+
+    %% 检查是否全部失败
+    successCount = 0;
+    for ax = 1:3
+        if isfield(result.recommended, axis_names{ax})
+            successCount = successCount + 1;
+        end
+    end
+    if successCount == 0
+        fprintf('\n');
+        fprintf('⚠️  ⚠️  ⚠️  所有轴辨识/调参均失败，无法给出参数建议 ⚠️  ⚠️  ⚠️\n');
+        fprintf('常见原因:\n');
+        fprintf('  1. 数据激励不足 (cmd_vel 几乎无变化，如悬停/缓慢移动)\n');
+        fprintf('  2. radar_pos 几乎不变 (无人机未实际移动)\n');
+        fprintf('  3. 数据时长过短 (< 几秒)\n');
+        fprintf('建议: 采集包含明显阶跃变化的飞行数据 (如快速移动、方向变化)\n');
+    else
+        fprintf('\n✅ 成功分析 %d/3 个轴\n', successCount);
     end
 
     %% S1: 控制台报告 + 图表
@@ -189,24 +212,116 @@ end
 
 
 %% =========================================================================
-%  S3: 数据加载
+%  S3: 数据加载（自动识别 raw 20 列或 clean 14 列格式）
 % =========================================================================
 function data = loadCsvData(csvPath)
-% LOADCSVDATA  读取 CSV 并提取 U1-U9 列
-%   CSV 格式：第 1 行数字 header，第 2 行列名 header，第 3 行起数据
-    opts = detectImportOptions(csvPath, 'NumVariables', 20);
-    opts.DataLines = [3, Inf];  % 跳过前两行 header
-    opts = setvartype(opts, 1:20, 'double');
+% LOADCSVDATA  读取 CSV 并提取雷达位置/目标位置/速度指令
+%   支持两种格式：
+%     A. 原始格式（20 列）：第 1 行数字 header，第 2 行列名，第 3 行起数据
+%        U1-U3: radar_pos, U4-U6: target_pos, U7-U9: cmd_vel
+%     B. 预处理格式（14 列）：第 1 行列名 header，第 2 行起数据
+%        T_REL, T_ABS, RADAR_POS_X/Y/Z, TARGET_POS_X/Y/Z, CMD_SPEED_X/Y/Z, ERROR_X/Y/Z
+
+    csvPath = char(csvPath);  % 防御性：确保 char
+
+    % 读第一行来判断格式
+    fid = fopen(csvPath, 'r');
+    if fid == -1
+        error('无法打开文件: %s', csvPath);
+    end
+    firstLine = fgetl(fid);
+    fclose(fid);
+    firstLine = strtrim(firstLine);
+
+    % 通过第一行内容判断格式
+    isCleanFormat = contains(firstLine, 'T_REL') || contains(firstLine, 'RADAR_POS_X');
+    % 如果第一行是纯数字逗号分隔 → raw 格式
+    isRawNumericHeader = ~isempty(regexp(firstLine, '^\s*1\s*,\s*2\s*,', 'once'));
+
+    if isCleanFormat || (~isRawNumericHeader && ~isempty(regexp(firstLine, '^[A-Z_]', 'once')))
+        % 预处理格式：单行 header，列名即数据描述
+        data = loadCleanFormat(csvPath);
+    else
+        % 原始格式：两行 header（数字 + 列名）
+        data = loadRawFormat(csvPath);
+    end
+end
+
+function data = loadCleanFormat(csvPath)
+% 预处理后的 clean CSV 格式
+    opts = detectImportOptions(csvPath);
+    opts.DataLines = [2, Inf];  % 跳过第 1 行列名
     rawData = readmatrix(csvPath, opts);
-    % 去除全 NaN 的行（可能的空行）
     rawData(all(isnan(rawData), 2), :) = [];
-    if size(rawData, 2) < 9
-        error('CSV 至少需要 9 列，实际只有 %d 列', size(rawData, 2));
+
+    % 通过列名找列索引
+    colNames = opts.VariableNames;
+    radarIdx = find(contains(colNames, 'RADAR_POS'));
+    targetIdx = find(contains(colNames, 'TARGET_POS'));
+    cmdIdx = find(contains(colNames, 'CMD_SPEED'));
+    trelIdx = find(contains(colNames, 'T_REL'));
+
+    if length(radarIdx) < 3 || length(targetIdx) < 3 || length(cmdIdx) < 3
+        error('clean CSV 缺少必要列 (RADAR_POS/TARGET_POS/CMD_SPEED)');
+    end
+
+    data.radar_pos = rawData(:, radarIdx(1:3));
+    data.target_pos = rawData(:, targetIdx(1:3));
+    data.cmd_vel = rawData(:, cmdIdx(1:3));
+
+    % 从 T_REL 计算实际 dt
+    if ~isempty(trelIdx)
+        t = rawData(:, trelIdx(1));
+        validDt = diff(t);
+        validDt = validDt(validDt > 0.001);  % 过滤 0 或负值
+        if ~isempty(validDt)
+            data.dt = median(validDt);
+        else
+            data.dt = 0.01;  % fallback 100Hz
+        end
+    else
+        data.dt = 0.01;
+    end
+    fprintf('   (clean 格式, %d 列, dt=%.4f s)\n', size(rawData, 2), data.dt);
+end
+
+function data = loadRawFormat(csvPath)
+% 原始 20 列 CSV 格式
+    % 先看有多少列
+    opts0 = detectImportOptions(csvPath);
+    nCols = length(opts0.VariableNames);
+    opts = detectImportOptions(csvPath, 'NumVariables', nCols);
+    opts.DataLines = [3, Inf];  % 跳过两行 header
+    opts = setvartype(opts, 1:nCols, 'double');
+    rawData = readmatrix(csvPath, opts);
+    rawData(all(isnan(rawData), 2), :) = [];
+
+    if nCols < 9
+        error('原始 CSV 至少需要 9 列，实际只有 %d 列', nCols);
     end
     data.radar_pos = rawData(:, 1:3);
     data.target_pos = rawData(:, 4:6);
     data.cmd_vel = rawData(:, 7:9);
-    data.dt = 0.1;  % 固定 10Hz
+
+    % 尝试从 Tick 列（U20）获取真实 dt
+    if nCols >= 20
+        tickCol = find(contains(opts.VariableNames, 'Tick'));
+        if ~isempty(tickCol)
+            tick = rawData(:, tickCol(1));
+            validTick = tick(tick > 0.1);
+            if length(validTick) > 1
+                dt_samples = diff(validTick);
+                dt_samples = dt_samples(dt_samples > 0.001);
+                if ~isempty(dt_samples)
+                    data.dt = median(dt_samples);
+                    fprintf('   (raw 格式, %d 列, dt=%.4f s 从 Tick 列)\n', nCols, data.dt);
+                    return;
+                end
+            end
+        end
+    end
+    data.dt = 0.01;  % fallback 100Hz
+    fprintf('   (raw 格式, %d 列, dt=%.4f s 默认)\n', nCols, data.dt);
 end
 
 
@@ -701,15 +816,20 @@ function printConsoleReport(result, pid, tuningMode)
     fprintf('╚══════════════════════════════════════════════════════════╝\n');
     fprintf('调参档位: %s\n', tuningMode);
     axis_names = {'X', 'Y', 'Z'};
+    hasRecommended = isfield(result, 'recommended') && ~isempty(result.recommended);
+    hasMetrics = isfield(result, 'metrics') && ~isempty(result.metrics);
     for ax = 1:3
         ax_name = axis_names{ax};
         fprintf('\n---------- %s 轴 ----------\n', ax_name);
-        if ~isfield(result.recommended, ax_name)
-            fprintf('   (跳过)\n');
+        if ~hasRecommended || ~isfield(result.recommended, ax_name)
+            fprintf('   (跳过 —— 该轴辨识或调参失败)\n');
             continue;
         end
         rec = result.recommended.(ax_name);
-        met = result.metrics.(ax_name);
+        met = struct();
+        if hasMetrics && isfield(result.metrics, ax_name)
+            met = result.metrics.(ax_name);
+        end
         cur = pid.(ax_name);
         fprintf('  当前参数: Kp=%.3f  Ki=%.3f  Kd=%.3f\n', ...
             cur.Kp_base, cur.Ki_base, cur.Kd_base);
@@ -744,37 +864,49 @@ function plotAnalysis(result, pid, radar_pos, target_pos, cmd_vel, t, dt)
 
     %% 2. 被控对象开环验证（用 logged cmd_vel 作为输入）
     subplot(3,2,2);
+    hasPlant = isfield(result, 'identified_plant') && ~isempty(result.identified_plant);
+    legendLabels = {};
     for ax = 1:3
-        if isfield(result.identified_plant, axis_names{ax})
+        if hasPlant && isfield(result.identified_plant, axis_names{ax})
             p = result.identified_plant.(axis_names{ax});
             y_sim = lsim(p, cmd_vel(:,ax), t);
             hold on;
             plot(t, radar_pos(:,ax), '-', 'Color', colors(ax,:));
             plot(t, y_sim, '--', 'Color', colors(ax,:), 'LineWidth', 2);
+            legendLabels{end+1} = [axis_names{ax}, ' actual'];
+            legendLabels{end+1} = [axis_names{ax}, ' model'];
         end
     end
     title('被控对象开环验证: 实际 vs 模型预测 (logged cmd_vel 输入)');
-    legend('X actual', 'X model', 'Y actual', 'Y model', 'Z actual', 'Z model', ...
-           'Location', 'best');
+    if ~isempty(legendLabels)
+        legend(legendLabels, 'Location', 'best');
+    else
+        plot(0, 0);  % 占位
+        title('被控对象开环验证 (无辨识结果)');
+    end
     grid on;
 
     %% 3. Bode 图
     subplot(3,2,3);
     sys_list = {};
     for ax = 1:3
-        if isfield(result.identified_plant, axis_names{ax})
+        if hasPlant && isfield(result.identified_plant, axis_names{ax})
             sys_list{end+1} = result.identified_plant.(axis_names{ax});
         end
     end
     if ~isempty(sys_list)
         bode(sys_list{:});
         title('被控对象 Bode 图');
+    else
+        plot(0, 0);  % 占位
+        title('被控对象 Bode 图 (无辨识结果)');
     end
 
     %% 4-6. 每轴闭环阶跃响应对比
+    hasRecommended = isfield(result, 'recommended') && ~isempty(result.recommended);
     for ax = 1:3
         ax_name = axis_names{ax};
-        if ~isfield(result.recommended, ax_name)
+        if ~hasRecommended || ~isfield(result.recommended, ax_name)
             continue;
         end
         p = result.identified_plant.(ax_name);
