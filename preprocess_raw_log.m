@@ -35,6 +35,8 @@ function result = preprocess_raw_log(rawCsvPath, options)
     if nargin < 1 || isempty(rawCsvPath)
         error('rawCsvPath 不能为空');
     end
+    % 强制转为 char，避免 string 对象在后续 fileparts/fullfile/fopen 中出问题
+    rawCsvPath = char(rawCsvPath);
     if nargin < 2 || isempty(options)
         options = struct();
     end
@@ -53,13 +55,16 @@ function result = preprocess_raw_log(rawCsvPath, options)
         error('未找到 Tick 列 (U20)。请确认 CSV 包含时间戳列。');
     end
     tick_abs = rawData(:, tickIdx);  % 绝对时间 (秒)
-    tick_start = tick_abs(find(~isnan(tick_abs), 1));  % 第一个有效 Tick
-    if isnan(tick_start)
-        error('Tick 列全为无效值');
+    % 跳过前导零值（MCU 启动初始化阶段 Tick=0 不是真实时间戳）
+    first_positive = find(tick_abs > 0.1, 1);  % >100ms 视为有效
+    if isempty(first_positive)
+        error('Tick 列全为 0 或无效值，无法建立时间基准');
     end
-    t_rel = tick_abs - tick_start;  % 相对时间 (从 0 开始)
-    fprintf('   Tick 范围: %.3f - %.3f s (相对: 0 - %.3f s)\n', ...
-        tick_start, tick_abs(end), t_rel(end));
+    tick_start = tick_abs(first_positive);
+    t_rel = tick_abs - tick_start;  % 相对时间（第一个有效 Tick 为 0）
+    fprintf('   Tick 起点: %.3f s (第 %d 行)\n', tick_start, first_positive + 2);
+    fprintf('   Tick 范围: %.3f - %.3f s (相对: %.3f - %.3f s)\n', ...
+        tick_abs(first_positive), tick_abs(end), t_rel(first_positive), t_rel(end));
 
     %% 3. 替换无效值为 NaN
     fprintf('[3/6] 替换无效值 (%s) 为 NaN...\n', mat2str(opts.invalid_values));
@@ -353,8 +358,6 @@ function mask = detectRadarRefresh(mat, colNames)
 
     radar_pos = mat(:, [radar_x_idx, radar_y_idx, radar_z_idx]);
 
-    % 检测变化（考虑 NaN：NaN ≠ NaN，但我们需要把它们视为"无变化"）
-    % 用 nan-diff：如果前后都是 NaN，视为无变化；任一不同则视为变化
     N = size(radar_pos, 1);
     mask = false(N, 1);
     mask(1) = true;  % 第一行总是视为刷新
@@ -362,10 +365,18 @@ function mask = detectRadarRefresh(mat, colNames)
     for k = 2:N
         prev = radar_pos(k-1, :);
         curr = radar_pos(k, :);
-        % 任一从 NaN 变非 NaN，或反之，视为刷新
-        if any(isnan(prev) ~= isnan(curr))
+
+        % 情况 1: NaN 状态变化（从 NaN ↔ 非 NaN）
+        prev_nan = isnan(prev);
+        curr_nan = isnan(curr);
+        if any(prev_nan ~= curr_nan)
             mask(k) = true;
-        elseif any(~isnan(curr) & abs(curr - prev) > 0.01)  % 变化 > 0.01 单位
+            continue;
+        end
+
+        % 情况 2: 数值变化（在两个都不是 NaN 的位置上）
+        valid = ~curr_nan & ~prev_nan;
+        if any(valid & abs(curr - prev) > 0.01)
             mask(k) = true;
         end
     end
@@ -378,22 +389,28 @@ end
 function [outClean, outRadar, outMeta, metadata] = saveCleanData(cleanMat, radarSyncMat, ...
     colNames, rawCsvPath, opts, tickStart)
 
+    % 确保 rawCsvPath 为 char（防御性）
+    rawCsvPath = char(rawCsvPath);
+
     if isempty(opts.output_dir)
         outDir = fileparts(rawCsvPath);
     else
-        outDir = opts.output_dir;
+        outDir = char(opts.output_dir);
     end
     if isempty(outDir)
         outDir = '.';
     end
     [~, baseName, ~] = fileparts(rawCsvPath);
+    baseName = char(baseName);
 
     % Clean CSV (全采样率)
-    outClean = fullfile(outDir, [baseName, '_clean.csv']);
+    outClean = char(fullfile(outDir, [baseName, '_clean.csv']));
+    fprintf('   写入: %s\n', outClean);
     writeCleanCsv(outClean, cleanMat, colNames);
 
     % Radar-sync CSV
-    outRadar = fullfile(outDir, [baseName, '_radar_sync.csv']);
+    outRadar = char(fullfile(outDir, [baseName, '_radar_sync.csv']));
+    fprintf('   写入: %s\n', outRadar);
     writeCleanCsv(outRadar, radarSyncMat, colNames);
 
     % 元数据
@@ -414,15 +431,21 @@ function [outClean, outRadar, outMeta, metadata] = saveCleanData(cleanMat, radar
         metadata.dt_actual_max_s = NaN;
     end
 
-    outMeta = fullfile(outDir, [baseName, '_metadata.mat']);
+    outMeta = char(fullfile(outDir, [baseName, '_metadata.mat']));
+    fprintf('   写入: %s\n', outMeta);
     save(outMeta, 'metadata');
 end
 
 function writeCleanCsv(path, mat, colNames)
+    % 强制转为 char（防止 string 对象传入导致 fopen 失败）
+    path = char(path);
+    if isempty(path)
+        error('writeCleanCsv: 文件路径为空');
+    end
     % 写 CSV：首行列名
     fid = fopen(path, 'w');
     if fid == -1
-        error('无法写入: %s', path);
+        error('无法写入文件: %s\n当前工作目录: %s', path, pwd);
     end
     fprintf(fid, '%s', colNames{1});
     for i = 2:length(colNames)
