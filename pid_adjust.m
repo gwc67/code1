@@ -19,9 +19,9 @@ addpath("function\pid\")
 % opts.VariableNamesLine = 1;
 % opts.DataLines = [2,Inf];     
 
-opts.X.Kp_base = 0.34;
+opts.X.Kp_base = 0.18;
 
-my_pid_analyze("excel_csv\still_circle_2\mystill_circle_2.csv",opts);
+my_pid_analyze("excel_csv\still_circle\mystill_circle.csv",opts);
 % col_names = opts.VariableNames;
 % radar_idx = find(contains(col_names,"RADAR_POS"));
 % target_idx = find(contains(col_names,"TARGET_POS"));

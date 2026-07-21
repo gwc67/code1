@@ -1,5 +1,6 @@
 function result = my_pid_analyze(csv_path,pid_params,tuning_mode)
 
+    addpath('function\save\');
     if nargin < 1 || isempty(csv_path)
         error('csv_path 不能为空');
     end
@@ -66,7 +67,7 @@ function result = my_pid_analyze(csv_path,pid_params,tuning_mode)
             continue;
         end
 
-        dt_k = dt_array(k); %当前帧真实dt
+        dt_k = dt_array(k) * 1000; % C代码 xTaskGetTickCount() 单位是 tick(1tick=1ms)，需将秒转换为tick单位
 
         [cmd_xy,rot_state] = pos_cmd_st(...
             pid.X,pid.Y,...
@@ -89,16 +90,21 @@ function result = my_pid_analyze(csv_path,pid_params,tuning_mode)
        sim_vel = cmd_vel_sim;
 
        subplot(3,1,1);
-       plot(t,raw_vel(:,1),'b-',t,sim_vel,'r-','LineWidth',1.1);
+       plot(t,raw_vel(:,1),'b-',t,sim_vel(:,1),'r-','LineWidth',1.1);
        grid on; legend('原始','仿真'); title('X轴速度');ylabel('m/s');
 
        subplot(3,1,2);
-       plot(t,raw_vel(:,2),'b-',t,sim_vel,'r-','LineWidth',1.1);
+       plot(t,raw_vel(:,2),'b-',t,sim_vel(:,2),'r-','LineWidth',1.1);
        grid on; legend('原始','仿真'); title('y轴速度');ylabel('m/s');
 
        subplot(3,1,3);
-       plot(t,raw_vel(:,3),'b-',t,sim_vel,'r-','LineWidth',1.1);
+       plot(t,raw_vel(:,3),'b-',t,sim_vel(:,3),'r-','LineWidth',1.1);
        grid on; legend('原始','仿真'); title('z轴速度');ylabel('m/s');
+
+    %     mat_out = [cmd_vel_sim,cmd_vel];
+    %    col_name = {'CMD_VEL_SIM_X','CMD_VEL_SIM_Y','CMD_VEL_SIM_Z','CMD_VEL_X','CMD_VEL_Y','CMD_VEL_Z'};
+    %    creat_file(mat_out,col_name,csv_path);
+
 end
 
 
@@ -249,10 +255,10 @@ end
 function [out,state] = pid_simulate(pid_ax,setpoint,measurement,state,dt)
     if isempty(state)
         state.integral = 0;
-        state.prev_measurement = 0;
-        state.prev_d_filtered = 0;
-        state.pre_target_vel = 0;
-        state.pre_target_position = measurement; %初始位置使用第一帧测量值
+        state.prev_measurement = 0;           % 对应 C: prev_measurement_f = 0.0f
+        state.prev_d_filtered = 0;            % 对应 C: prev_d_filtered_f = 0.0f
+        state.pre_target_vel = 0;             % 对应 C: pre_target_vel_f = 0
+        state.pre_target_position = 0;        % 对应 C: pre_target_position_f = 0（不是 measurement）
     end
 
     error = setpoint - measurement;
@@ -264,7 +270,7 @@ function [out,state] = pid_simulate(pid_ax,setpoint,measurement,state,dt)
         Kd = pid_ax.Kd_base * pid_ax.Kd_high_ratio;
     elseif error_abs > pid_ax.error_threshold_low
         ratio = (error_abs - pid_ax.error_threshold_low) / ...
-                (pid_ax.error_threshold_high - pid_ax.error_threshold_low + 1e-10);
+                (pid_ax.error_threshold_high - pid_ax.error_threshold_low);
         Kp = pid_ax.Kp_base * (1 + ratio * (pid_ax.Kp_high_ratio - 1));
         Ki = pid_ax.Ki_base * (1 - ratio * (1 - pid_ax.Ki_high_ratio));
         Kd = pid_ax.Kd_base * (1 - ratio * (1 - pid_ax.Kd_high_ratio));
@@ -296,10 +302,10 @@ function [out,state] = pid_simulate(pid_ax,setpoint,measurement,state,dt)
     % 输出限幅 + 抗饱和
     if out > pid_ax.output_max
         out = pid_ax.output_max;
-        state.integral = (out - Kp * error + Kd * d_filtered) / (Ki + 1e-10);
+        state.integral = (out - Kp * error + Kd * d_filtered) / Ki;
     elseif out < pid_ax.output_min
         out = pid_ax.output_min;
-        state.integral = (out - Kp * error + Kd * d_filtered) / (Ki + 1e-10);
+        state.integral = (out - Kp * error + Kd * d_filtered) / Ki;
     end
 
     % 更新状态
@@ -332,15 +338,27 @@ function [cmd_vel_out,state_out] = pos_cmd_st(pid_x,pid_y,...
 
         if norm(delta_xy) < 1e-6
             rot_state.theta_1 = 0;
-        else 
+        else
             rot_state.theta_1 = atan2(delta_xy(2),delta_xy(1));
-        end 
+        end
 
         rot_state.setpoint_modulus = norm(delta_xy);
         rot_state.last_target   = target_pos_xy;
 
-        rot_state.state_X = [];
-        rot_state.state_Y = [];
+        % 复刻 C 代码 pid_reset_v: 只重置 integral 和 prev_measurement
+        % 保留 prev_d_filtered、pre_target_position、pre_target_vel
+        if ~isempty(rot_state.state_X)
+            rot_state.state_X.integral = 0;
+            rot_state.state_X.prev_measurement = 0;
+        else
+            rot_state.state_X = [];
+        end
+        if ~isempty(rot_state.state_Y)
+            rot_state.state_Y.integral = 0;
+            rot_state.state_Y.prev_measurement = 0;
+        else
+            rot_state.state_Y = [];
+        end
     end
 
     un_trans_pos = radar_pos_xy - rot_state.start_point;
