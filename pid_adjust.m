@@ -5,8 +5,32 @@ addpath(fullfile(pwd,"function\",'pid'));
 addpath(fullfile(pwd,"function\",'track')); %添加路径
 addpath("filiter\");
 addpath("excel_csv\still_circle_waypoints\");
+addpath("excel_csv\test9\");
+addpath("function\pid\")
+% opts =struct('output_dir','excel_csv/test9','output_name','test9_my.csv');
+% my_flitter("excel_csv/test9.csv",opts)
 
-% opts =struct('dt',0.05,'output_dir',' excel_csv\still_circle_waypoints\','output_name',' my.csv');
-opts = struct('dt',0.1);
-my_flitter("excel_csv/test7.csv",opts)
+% pid_params = struct('Kp',0.1);
+pid_params.X.Kp_base = 0.1;
+pid_params.X.Ki_base = 0.2;
+pid_params.X.Kd_base = 0.6;
+my_pid_analyze("excel_csv/test9.csv",pid_params);
+% opts = detectImportOptions("excel_csv/test9.csv");
+% disp(opts);
+
+% opts.DataLines = [3,Inf];
+
+% T = readtable("excel_csv/test9.csv",opts);
+% col_names = T.Properties.VariableNames;
+% data_mat = table2array(T);
+
+% disp('列名');
+% disp(col_names);
+% disp('前5行')
+% disp(data_mat(1:5,:));
+
+% fprintf('names_line = %d \n',opts.VariableNamesLine);
+% s = '   TICK , X , Y , Z  '
+% s2 = strtrim(s)
+    % s2 结果：'TICK , X , Y , Z'
 
