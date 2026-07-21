@@ -17,8 +17,9 @@ function result = my_flitter(csvPath,options)
 
     flds = fieldnames(options);         
     for i = 1 : length(flds)            %循环覆盖默认参数
+        oldvalue = opts.(flds{i});
         opts.(flds{i}) = options.(flds{i});
-        fprintf('更新参数[%s] : 旧值= %g -> 新值=%g\n',fieldnames,oldValue,newValue);
+        fprintf('更新参数[%s] : 旧值= %g -> 新值=%g\n',flds{i},oldvalue,opts.(flds{i}));
     end
 
 
