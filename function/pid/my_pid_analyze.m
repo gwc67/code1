@@ -101,9 +101,7 @@ function result = my_pid_analyze(csv_path,pid_params,tuning_mode)
        plot(t,raw_vel(:,3),'b-',t,sim_vel(:,3),'r-','LineWidth',1.1);
        grid on; legend('原始','仿真'); title('z轴速度');ylabel('m/s');
 
-    %     mat_out = [cmd_vel_sim,cmd_vel];
-    %    col_name = {'CMD_VEL_SIM_X','CMD_VEL_SIM_Y','CMD_VEL_SIM_Z','CMD_VEL_X','CMD_VEL_Y','CMD_VEL_Z'};
-    %    creat_file(mat_out,col_name,csv_path);
+        
 
 end
 
