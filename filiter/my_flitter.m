@@ -189,6 +189,7 @@ function outPath = saveOutput(mat,col_name,csv_path_raw,opts)
 end
 
 
+%%
 %这个函数看来只是对时间列进行了一次转换罢了
 function [data_out,out_num] = resample_to_uniform(t_rel,data_in,dt_target)
 
@@ -199,7 +200,6 @@ function [data_out,out_num] = resample_to_uniform(t_rel,data_in,dt_target)
         return;
     end
 
-    %% 
   
   %{
        原始时间：t_rel = [0, 0.12, 0.21, 0.35]，dt_target=0.1
@@ -243,3 +243,5 @@ function [data_out,out_num] = resample_to_uniform(t_rel,data_in,dt_target)
     data_out = [data_out,t_uniform,t_abs_uniform];  %追加两列 矩阵运算
     out_num  = t_uniform_num;
 end
+
+%%

@@ -8,5 +8,5 @@ addpath("excel_csv\still_circle_waypoints\");
 
 % opts =struct('dt',0.05,'output_dir',' excel_csv\still_circle_waypoints\','output_name',' my.csv');
 opts = struct('dt',0.1);
-my_flitter("excel_csv/still_circle.csv",opts)
+my_flitter("excel_csv/test7.csv",opts)
 
