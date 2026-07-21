@@ -68,7 +68,7 @@ function result = analyze_pid_performance(csvPath, pidParams, tuningMode)
 
     %% ========== Part A: PID 仿真对比（所有数据都能做）==========
     fprintf('\n[3/6] PID 仿真对比 (MATLAB 模拟 vs 实际 cmd_vel)...\n');
-    for ax = 1:3
+    for ax = 1:3            %循环3次
         ax_name = axis_names{ax};
         pid_ax = pid.(ax_name);
 
@@ -753,7 +753,7 @@ function [out, state] = pidSimulate(pid_ax, setpoint, measurement, state, dt)
     % 更新状态
     state.prev_measurement = measurement;
     state.prev_d_filtered = d_filtered;
-    state.pre_target_position = setpoint;
+    state.pre_target_position = measurement;
     state.pre_target_vel = target_vel;
 end
 

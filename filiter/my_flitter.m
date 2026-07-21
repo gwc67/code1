@@ -1,4 +1,4 @@
-function result = pre_log(csvPath)
+function result = my_flitter(csvPath,options)
 
     
     if nargin < 1 || isempty(csvPath)
@@ -6,11 +6,27 @@ function result = pre_log(csvPath)
         disp("启用默认配置文件")
         csvPath = char(csvPath);
     end     
-    [rawData,colNames] = loadRawCsv(csvPath);
+    csvPath = char(csvPath);
+    if nargin < 2 || isempty(options)
+        options = struct();            % 如果调用时不传第二个参数，或者传了空，就手动创建一个空结构体；
+    end
 
-    tickCol = rawData(:, 20);  % U20 = Tick
+    opts.dt = 0.1;                     
+    opts.output_dir = '';
+    opts.output_name = '';
+
+    flds = fieldnames(options);         
+    for i = 1 : length(flds)            %循环覆盖默认参数
+        opts.(flds{i}) = options.(flds{i});
+        fprintf('更新参数[%s] : 旧值= %g -> 新值=%g\n',fieldnames,oldValue,newValue);
+    end
+
+
+    % [rawData,colNames] = loadRawCsv(csvPath);
+
+    % tickCol = rawData(:, 20);  % U20 = Tick
     
-    [dedupData, nDedup] = deduplicateByTick(rawData, tickCol);
+    % [dedupData, nDedup] = deduplicateByTick(rawData, tickCol);
 
 end
 
@@ -75,12 +91,50 @@ function [dedupData,nDedup] = deduplicateByTick(data,tickCol)
     %}
 
     uniqueTicks_num = length(uniqueTciks);
-    keepIdx = zeros(uniqueTicks_num,1);  
+    keepIdx = zeros(uniqueTicks_num,1);                 %keepidx保留下来的csv波形
     for k = 1:uniqueTicks_num
         all_cur_group_row = find(groupIdx_raw == k);    %% 输出 all_cur_group_row = [1,2]
 
         cmd_speed = data(all_cur_group_row,7:9);
         has_speed = any(abs(cmd_speed) > 0.5,2);        %对每一行，只要 3 个速度里任意一列满足 > 0.5，该行结果为 true
-        disp(cmd_speed)
+
+        if any(has_speed)
+            speedRows = all_cur_group_row(has_speed);
+            keepIdx(k) = speedRows(1); 
+        else 
+            keepIdx(k) = all_cur_group_row(end);
+        end
     end
+
+    keepIdx = sort(keepIdx);
+    dedupData = data(keepIdx,:);                        %数据矩阵
+    nDedup   = length(keepIdx);                         %矩阵有效长度
+end
+
+%输出文件
+function outPath = saveOutput(mat,colNames,rawCsvPath,opts)
+    if isempty(opts.output_dir)
+        outDir = fileparts(rawCsvPath);
+    else 
+        outDir = char(opts.output_dir);                 %输出的文件夹的位置
+    end
+    if isempty(outDir)
+        outDir = '.';
+    end
+
+    if isempty(opts.output_name)
+        [~,baseName,~] = fileparts(rawCsvPath);
+        outName = [ char(baseName),'_filtered'];
+    else
+        outName = char(opts.output_name);
+    end
+
+    outPath = char(fullfile(outDir,[outName,'.csv'])); %输出的文件名字
+
+    varData = cell(1,size(mat,2));
+    for c = 1 : size(mat,2)
+        varData{c} = mat(:,c);
+    end
+    T = table(varData{:},"VariableNames",colNames);
+    writetable(T,outPath);
 end

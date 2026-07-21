@@ -7,9 +7,9 @@ addpath("filiter\");
 addpath("excel_csv\still_circle_waypoints\");
 
 
-pre_log("./excel_csv/still_circle.csv")
-split_waypoints("excel_csv\still_circle_filtered.csv")
-% analyze_pid_performance("D:\Documents\MATLAB\code1\excel_csv\still_circle_waypoints\wp2_target_0_75_140.csv");
+preprocess_raw_log("./excel_csv/still_circle.csv")
+split_waypoints("excel_csv\still_circle_radar_sync.csv")
+analyze_pid_performance("D:\Documents\MATLAB\code1\excel_csv\still_circle_waypoints\wp2_target_0_75_140.csv");
 % plot_radar_3d_optimized("./excel_csv/still_circle_radar_sync.csv");
 
 % figure;
