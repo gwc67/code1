@@ -72,7 +72,6 @@ function result = my_pid_analyze(csv_path,pid_params,tuning_mode)
             pid.X,pid.Y,...
             measurement,setpoint,...
             rot_state,...
-            rot_state.state_X,rot_state.state_Y,...
             dt_k ...
             );
         [cmd_z,state_z] = pid_simulate(pid.Z,setpoint(3),measurement(3),state_z,dt_k);
@@ -90,15 +89,15 @@ function result = my_pid_analyze(csv_path,pid_params,tuning_mode)
        sim_vel = cmd_vel_sim;
 
        subplot(3,1,1);
-       plot(t,raw_vel(:,1),'b-',t,sim_vel,'r+','LineWidth',1.1);
+       plot(t,raw_vel(:,1),'b-',t,sim_vel,'r-','LineWidth',1.1);
        grid on; legend('原始','仿真'); title('X轴速度');ylabel('m/s');
 
        subplot(3,1,2);
-       plot(t,raw_vel(:,2),'b-',t,sim_vel,'r+','LineWidth',1.1);
+       plot(t,raw_vel(:,2),'b-',t,sim_vel,'r-','LineWidth',1.1);
        grid on; legend('原始','仿真'); title('y轴速度');ylabel('m/s');
 
        subplot(3,1,3);
-       plot(t,raw_vel(:,3),'b-',t,sim_vel,'r+','LineWidth',1.1);
+       plot(t,raw_vel(:,3),'b-',t,sim_vel,'r-','LineWidth',1.1);
        grid on; legend('原始','仿真'); title('z轴速度');ylabel('m/s');
 end
 
@@ -229,6 +228,9 @@ function data_out = load_csv_data(csv_path)
 
         dt_array(abnormal_idx) = median(dt_array(~abnormal_idx)); %异常的点使用中位数进行填充
 
+        %补齐到与数据等长：第1帧没有前一帧，用第1个dt填充
+        dt_array = [dt_array(1); dt_array];
+
         %4. 输出： 逐点dt 数组 + 参考中位数dt
         data_out.dt_array = dt_array; %每一行对应一个真实的dt,PID 仿真使用这个
         data_out.dt_median = median(dt_array); %参考平均采样周期
@@ -337,8 +339,8 @@ function [cmd_vel_out,state_out] = pos_cmd_st(pid_x,pid_y,...
         rot_state.setpoint_modulus = norm(delta_xy);
         rot_state.last_target   = target_pos_xy;
 
-        state_X = [];
-        state_Y = [];
+        rot_state.state_X = [];
+        rot_state.state_Y = [];
     end
 
     un_trans_pos = radar_pos_xy - rot_state.start_point;
@@ -352,6 +354,9 @@ function [cmd_vel_out,state_out] = pos_cmd_st(pid_x,pid_y,...
 
     length_x = pos_modulus* cos(rot_state.theta_1 - theta_2);
     length_y = pos_modulus* sin(rot_state.theta_1 - theta_2);
+
+    state_X = rot_state.state_X;
+    state_Y = rot_state.state_Y;
 
     [cmd_x,state_X] = pid_simulate(pid_x,rot_state.setpoint_modulus,length_x,state_X,dt);
     [cmd_y,state_Y] = pid_simulate(pid_y,0,length_y,state_Y,dt);
