@@ -7,8 +7,8 @@ addpath("filiter\");
 addpath("excel_csv\still_circle_waypoints\");
 addpath("excel_csv\test9\");
 addpath("function\pid\")
-% opts =struct('output_dir','excel_csv/still_circle_2','output_name','mystill_circle_2');
-% my_flitter("excel_csv/still_circle_2.csv",opts)
+opts =struct('output_dir','excel_csv/kp=0.1--ki=0.06--kd=0.2','output_name','kp=0.1--ki=0.06--kd=0.2');
+my_flitter("excel_csv/kp=0.1--ki=0.06--kd=0.2.csv",opts)
 
 % pid_params = struct('Kp',0.1);
 % pid_params.X.Kp_base = 0.1;
@@ -21,9 +21,9 @@ addpath("function\pid\")
 
 opts.X.Kp_base = 0.18;
 
-my_pid_analyze("excel_csv\still_circle_2\mystill_circle_2.csv",opts);
-analyze_overshoot("excel_csv\still_circle_2\mystill_circle_2.csv");
-identify_and_tune("excel_csv\still_circle_2\mystill_circle_2.csv");
+my_pid_analyze("excel_csv\kp=0.1--ki=0.06--kd=0.2\kp=0.1--ki=0.06--kd=0.2.csv",opts);
+% analyze_overshoot("excel_csv\still_circle_2\mystill_circle_2.csv");
+% identify_and_tune("excel_csv\still_circle_2\mystill_circle_2.csv");
 % col_names = opts.VariableNames;
 % radar_idx = find(contains(col_names,"RADAR_POS"));
 % target_idx = find(contains(col_names,"TARGET_POS"));

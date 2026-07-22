@@ -51,18 +51,21 @@ function result = my_flitter(csvPath,options)
     radar_pos = data_de(:,1:3); 
     target_pos = data_de(:,4:6);
     cmd_vel    = data_de(:,7:9);
+    
+    qua = data_de(:,10:13);
+    rt_tar = data_de(:,17:18);
     error = target_pos - radar_pos;
 
     % t_rel_out = data_de(:,21);   %均匀时间列
     % t_abs_out = data_de(:,22);   %绝对时间列
 
-    mat_out = [tick_rel,tick_abs,radar_pos,target_pos,cmd_vel,error];
+    mat_out = [tick_rel,tick_abs,radar_pos,target_pos,cmd_vel,error,qua,rt_tar];
     
     col_names = {'T_REL','T_ABS',...
                 'RADAR_POS_X','RADAR_POS_Y','RADAR_POS_Z',...
                 'TARGET_POS_X','TARGET_POS_Y','TARGET_POS_Z',...
                 'CMD_SPEED_X','CMD_SPEED_Y','CMD_SPEED_Z',...
-                'ERROR_X','ERROR_Y','ERROR_Z'};
+                'ERROR_X','ERROR_Y','ERROR_Z','qw','qx','qy','qz','rt_tar_vel_x','rt_tar_vel_y'};
     outPath = saveOutput(mat_out,col_names,csvPath,opts);
     fprintf('  写入:%s \n',outPath);
 
@@ -185,7 +188,7 @@ function outPath = saveOutput(mat,col_name,csv_path_raw,opts)
         fprintf('创建输出文件夹:%s\n',folder_out);
     end
 
-    
+
     % 构造 table 并写入
     varData = cell(1,size(mat,2));
     for c = 1 : size(mat,2)
