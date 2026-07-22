@@ -153,10 +153,14 @@ function result = my_pid_analyze(csv_path,pid_params,tuning_mode)
 
        % --- 图3: 四元数导出的 Yaw 角时序 ---
        if has_quat
-           % 复刻 fc_ctrl.c 的 yaw 计算公式:
+           % 复刻 fc_ctrl.c 的 yaw 计算公式 (四元数顺序: qx,qy,qz,qw)
            % yaw = -atan2(2*qX*qY + 2*qZ*qW, -2*qY^2 - 2*qZ^2 + 1) * 57.2957795
-           yaw_deg = -atan2(2*quat(:,2).*quat(:,3) + 2*quat(:,4).*quat(:,1), ...
-                            -2*quat(:,3).^2 - 2*quat(:,4).^2 + 1) * 57.2957795;
+           qx_col = quat(:,1);
+           qy_col = quat(:,2);
+           qz_col = quat(:,3);
+           qw_col = quat(:,4);
+           yaw_deg = -atan2(2*qx_col.*qy_col + 2*qz_col.*qw_col, ...
+                            -2*qy_col.^2 - 2*qz_col.^2 + 1) * 57.2957795;
            figure('Name','雷达四元数 Yaw 角');
            plot(t, yaw_deg, 'b-', 'LineWidth', 1.0);
            grid on;
@@ -282,18 +286,18 @@ function data_out = load_csv_data(csv_path)
     data_out.target_pos = data_raw(:,target_idx(1:3));
     data_out.cmd_vel   = data_raw(:,cmd_idx(1:3));
 
-    % 加载四元数 (qw,qx,qy,qz) — 可选
-    qw_idx = find(contains(col_names, 'qw'));
+    % 加载四元数 (qx,qy,qz,qw) — 注意列顺序!
     qx_idx = find(contains(col_names, 'qx'));
     qy_idx = find(contains(col_names, 'qy'));
     qz_idx = find(contains(col_names, 'qz'));
+    qw_idx = find(contains(col_names, 'qw'));
     if ~isempty(qw_idx) && ~isempty(qx_idx) && ...
        ~isempty(qy_idx) && ~isempty(qz_idx)
-        data_out.quat = data_raw(:, [qw_idx(1), qx_idx(1), qy_idx(1), qz_idx(1)]);
-        fprintf('  [四元数] 已加载 (%d 行)\n', size(data_out.quat, 1));
+        data_out.quat = data_raw(:, [qx_idx(1), qy_idx(1), qz_idx(1), qw_idx(1)]);
+        fprintf('  [四元数] 已加载 (顺序: qx,qy,qz,qw)\n');
     else
         data_out.quat = [];
-        fprintf('  [四元数] 未找到 qw/qx/qy/qz 列，跳过\n');
+        fprintf('  [四元数] 未找到 qx/qy/qz/qw 列，跳过\n');
     end
 
     % 加载机体系实时目标速度 rt_tar_vel_x/y — 可选
@@ -484,7 +488,7 @@ function [vx_body, vy_body] = quat_rot_vel_xy(vx_radar, vy_radar, q)
 %
 % 输入:
 %   vx_radar, vy_radar — 雷达系速度指令 (来自 PID)
-%   q — 四元数行向量 [qw, qx, qy, qz] (原始雷达四元数, 未取负)
+%   q — 四元数行向量 [qx, qy, qz, qw] (注意顺序!)
 %
 % 输出:
 %   vx_body, vy_body — 旋转后的机体系速度
@@ -492,20 +496,20 @@ function [vx_body, vy_body] = quat_rot_vel_xy(vx_radar, vy_radar, q)
 % 原理:
 %   C 代码中 qX_f=-qX, qY_f=-qY, qZ_f=-qZ (取负 = 四元数共轭),
 %   等价于从雷达系到机体系的逆变换.
-%   只处理 XY 行, vZ 不变.
 
-    qw = q(1);
-    qx_raw = q(2);
-    qy_raw = q(3);
-    qz_raw = q(4);
+    % 提取四元数分量 (顺序: qx, qy, qz, qw)
+    qx_raw = q(1);
+    qy_raw = q(2);
+    qz_raw = q(3);
+    qw = q(4);
 
-    % 复刻 C 代码: 取共轭
+    % C 代码取共轭: qX_f=-qX, qY_f=-qY, qZ_f=-qZ
     qx = -qx_raw;
     qy = -qy_raw;
     qz = -qz_raw;
     % qw 保持不变
 
-    % 旋转矩阵 XY 行 (标准四元数旋转矩阵)
+    % 旋转矩阵 XY 行
     r11 = 1 - 2*qy*qy - 2*qz*qz;
     r12 = 2*qx*qy - 2*qw*qz;
     r21 = 2*qx*qy + 2*qw*qz;
