@@ -43,7 +43,7 @@ function result = my_pid_analyze(csv_path,pid_params,tuning_mode)
 
     %% PART A PID 仿真对比
 
-
+    
     fprintf('\n');
     fprintf('\nPID 仿真对比 (MATLAB 模拟 vs 实际 cmd_vel)...\n');
     fprintf('\n');
@@ -53,8 +53,13 @@ function result = my_pid_analyze(csv_path,pid_params,tuning_mode)
 
     rot_state = [];
     state_z = [];  %Z轴独立PID状态
-    cmd_vel_sim = zeros(row_raw_num,3); %仿真输出XYZ速度
+    cmd_vel_sim = zeros(row_raw_num,3); %仿真输出XYZ速度(雷达系)
+    cmd_vel_body_sim = zeros(row_raw_num,3); %仿真输出 经四元数旋转后的机体系速度
 
+    has_quat = isfield(data_raw, 'quat') && ~isempty(data_raw.quat);
+    if has_quat
+        quat = data_raw.quat;
+    end
 
     for k = 1:row_raw_num
         setpoint = target_pos(k,:);
@@ -63,6 +68,7 @@ function result = my_pid_analyze(csv_path,pid_params,tuning_mode)
         if any(isnan(setpoint)) || any(isnan(measurement))
             if k > 1
                 cmd_vel_sim(k,:) = cmd_vel_sim(k - 1,:);
+                cmd_vel_body_sim(k,:) = cmd_vel_body_sim(k - 1,:);
             end
             continue;
         end
@@ -79,27 +85,86 @@ function result = my_pid_analyze(csv_path,pid_params,tuning_mode)
 
         cmd_vel_sim(k,1:2) = cmd_xy;
         cmd_vel_sim(k,3) = cmd_z;
+
+        % === 四元数旋转: 雷达系速度 → 机体系速度 (复刻 s_cmd_vel_consume_v) ===
+        if has_quat
+            q = quat(k, :);  % [qw, qx, qy, qz]
+            [vx_b, vy_b] = quat_rot_vel_xy(cmd_xy(1), cmd_xy(2), q);
+            cmd_vel_body_sim(k, 1) = vx_b;
+            cmd_vel_body_sim(k, 2) = vy_b;
+        end
+        cmd_vel_body_sim(k, 3) = cmd_z;  % Z 轴不做旋转
     end
-       result.sim_cmd_vel.XY_rotated = cmd_vel_sim(:,1:2);
+       result.sim_cmd_vel.XY_radar = cmd_vel_sim(:,1:2);
        result.sim_cmd_vel.Z = cmd_vel_sim(:,3);
        result.sim_cmd_vel.full = cmd_vel_sim;
+       if has_quat
+           result.sim_cmd_vel.body_XY = cmd_vel_body_sim(:,1:2);
+       end
 
-       figure('Name','三轴速度对比');
+       %% ========== 绘图 ==========
        t = data_raw.t;
        raw_vel = cmd_vel;
        sim_vel = cmd_vel_sim;
 
-       subplot(3,1,1);
-       plot(t,raw_vel(:,1),'b-',t,sim_vel(:,1),'r-','LineWidth',1.1);
-       grid on; legend('原始','仿真'); title('X轴速度');ylabel('m/s');
+       % --- 图1: 雷达系速度对比 (cmd_vel vs sim) ---
+       figure('Name','雷达系 三轴速度对比');
+       ax_names = {'X','Y','Z'};
+       for ax = 1:3
+           subplot(3,1,ax);
+           plot(t,raw_vel(:,ax),'b-',t,sim_vel(:,ax),'r-','LineWidth',1.1);
+           grid on; legend('实际 cmd_vel','仿真', 'Location','best');
+           title(sprintf('%s轴 雷达系速度', ax_names{ax})); ylabel('速度');
+       end
 
-       subplot(3,1,2);
-       plot(t,raw_vel(:,2),'b-',t,sim_vel(:,2),'r-','LineWidth',1.1);
-       grid on; legend('原始','仿真'); title('y轴速度');ylabel('m/s');
+       % --- 图2: 机体系 XY 速度对比 (rt_tar_vel vs sim_body) ---
+       if has_quat && isfield(data_raw, 'rt_tar_vel') && ~isempty(data_raw.rt_tar_vel)
+           rt_tar = data_raw.rt_tar_vel;
+           figure('Name','机体系 XY 速度对比 (rt_tar_vel vs 仿真)');
 
-       subplot(3,1,3);
-       plot(t,raw_vel(:,3),'b-',t,sim_vel(:,3),'r-','LineWidth',1.1);
-       grid on; legend('原始','仿真'); title('z轴速度');ylabel('m/s');
+           subplot(2,1,1);
+           plot(t, rt_tar(:,1),'b-', t, cmd_vel_body_sim(:,1),'r--', ...
+                t, cmd_vel_sim(:,1),'g:', 'LineWidth', 1.1);
+           grid on;
+           legend('实际 rt_tar_vel_x (机体系)', '仿真+旋转 (机体系)', '仿真 (雷达系)', 'Location','best');
+           title('X轴: 雷达系 → 机体系 旋转对比'); ylabel('速度');
+
+           subplot(2,1,2);
+           plot(t, rt_tar(:,2),'b-', t, cmd_vel_body_sim(:,2),'r--', ...
+                t, cmd_vel_sim(:,2),'g:', 'LineWidth', 1.1);
+           grid on;
+           legend('实际 rt_tar_vel_y (机体系)', '仿真+旋转 (机体系)', '仿真 (雷达系)', 'Location','best');
+           title('Y轴: 雷达系 → 机体系 旋转对比'); ylabel('速度'); xlabel('时间');
+
+           % 计算机体系仿真 vs 实际 rt_tar_vel 的 NRMSE
+           for ax = 1:2
+               ax_n = {'X','Y'};
+               err = cmd_vel_body_sim(:,ax) - rt_tar(:,ax);
+               rmse_val = sqrt(mean(err.^2));
+               rng_val = max(rt_tar(:,ax)) - min(rt_tar(:,ax));
+               if rng_val > 1e-6
+                   nrmse = rmse_val / rng_val * 100;
+               else
+                   nrmse = NaN;
+               end
+               fprintf('  机体系 %s: RMSE=%.3f, NRMSE=%.1f%%\n', ax_n{ax}, rmse_val, nrmse);
+           end
+       end
+
+       % --- 图3: 四元数导出的 Yaw 角时序 ---
+       if has_quat
+           % 复刻 fc_ctrl.c 的 yaw 计算公式:
+           % yaw = -atan2(2*qX*qY + 2*qZ*qW, -2*qY^2 - 2*qZ^2 + 1) * 57.2957795
+           yaw_deg = -atan2(2*quat(:,2).*quat(:,3) + 2*quat(:,4).*quat(:,1), ...
+                            -2*quat(:,3).^2 - 2*quat(:,4).^2 + 1) * 57.2957795;
+           figure('Name','雷达四元数 Yaw 角');
+           plot(t, yaw_deg, 'b-', 'LineWidth', 1.0);
+           grid on;
+           title('由四元数导出的 Yaw 角 (复刻 fc_ctrl.c 公式)');
+           xlabel('时间'); ylabel('Yaw (deg)');
+
+           result.yaw_deg = yaw_deg;
+       end
 
         
 
@@ -216,6 +281,31 @@ function data_out = load_csv_data(csv_path)
     data_out.radar_pos = data_raw(:,radar_idx(1:3));
     data_out.target_pos = data_raw(:,target_idx(1:3));
     data_out.cmd_vel   = data_raw(:,cmd_idx(1:3));
+
+    % 加载四元数 (qw,qx,qy,qz) — 可选
+    qw_idx = find(contains(col_names, 'qw'));
+    qx_idx = find(contains(col_names, 'qx'));
+    qy_idx = find(contains(col_names, 'qy'));
+    qz_idx = find(contains(col_names, 'qz'));
+    if ~isempty(qw_idx) && ~isempty(qx_idx) && ...
+       ~isempty(qy_idx) && ~isempty(qz_idx)
+        data_out.quat = data_raw(:, [qw_idx(1), qx_idx(1), qy_idx(1), qz_idx(1)]);
+        fprintf('  [四元数] 已加载 (%d 行)\n', size(data_out.quat, 1));
+    else
+        data_out.quat = [];
+        fprintf('  [四元数] 未找到 qw/qx/qy/qz 列，跳过\n');
+    end
+
+    % 加载机体系实时目标速度 rt_tar_vel_x/y — 可选
+    rtx_idx = find(contains(col_names, 'rt_tar_vel_x'));
+    rty_idx = find(contains(col_names, 'rt_tar_vel_y'));
+    if ~isempty(rtx_idx) && ~isempty(rty_idx)
+        data_out.rt_tar_vel = data_raw(:, [rtx_idx(1), rty_idx(1)]);
+        fprintf('  [rt_tar_vel] 已加载 (机体系速度)\n');
+    else
+        data_out.rt_tar_vel = [];
+        fprintf('  [rt_tar_vel] 未找到，跳过\n');
+    end
 
     % 从 T_REL 计算 实际 dt
 
@@ -385,5 +475,43 @@ function [cmd_vel_out,state_out] = pos_cmd_st(pid_x,pid_y,...
     rot_state.state_Y = state_Y;
 
     state_out = rot_state;
+end
+
+
+%% ========== 四元数旋转: 雷达系 → 机体系 ==========
+function [vx_body, vy_body] = quat_rot_vel_xy(vx_radar, vy_radar, q)
+% QUAT_ROT_VEL_XY 复刻 s_cmd_vel_consume_v 中的四元数旋转
+%
+% 输入:
+%   vx_radar, vy_radar — 雷达系速度指令 (来自 PID)
+%   q — 四元数行向量 [qw, qx, qy, qz] (原始雷达四元数, 未取负)
+%
+% 输出:
+%   vx_body, vy_body — 旋转后的机体系速度
+%
+% 原理:
+%   C 代码中 qX_f=-qX, qY_f=-qY, qZ_f=-qZ (取负 = 四元数共轭),
+%   等价于从雷达系到机体系的逆变换.
+%   只处理 XY 行, vZ 不变.
+
+    qw = q(1);
+    qx_raw = q(2);
+    qy_raw = q(3);
+    qz_raw = q(4);
+
+    % 复刻 C 代码: 取共轭
+    qx = -qx_raw;
+    qy = -qy_raw;
+    qz = -qz_raw;
+    % qw 保持不变
+
+    % 旋转矩阵 XY 行 (标准四元数旋转矩阵)
+    r11 = 1 - 2*qy*qy - 2*qz*qz;
+    r12 = 2*qx*qy - 2*qw*qz;
+    r21 = 2*qx*qy + 2*qw*qz;
+    r22 = 1 - 2*qx*qx - 2*qz*qz;
+
+    vx_body = r11 * vx_radar + r12 * vy_radar;
+    vy_body = r21 * vx_radar + r22 * vy_radar;
 end
 

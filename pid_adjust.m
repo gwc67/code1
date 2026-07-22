@@ -19,7 +19,12 @@ my_flitter("excel_csv/kp=0.1--ki=0.06--kd=0.2.csv",opts)
 % opts.VariableNamesLine = 1;
 % opts.DataLines = [2,Inf];     
 
-opts.X.Kp_base = 0.18;
+opts.X.Kp_base = 0.1;
+opts.Y.Kp_base = 0.1;
+opts.X.Ki_base = 0.06;
+opts.Y.Ki_base = 0.06;
+opts.X.Kd_base = 0.2;
+opts.Y.Kd_base = 0.2;
 
 my_pid_analyze("excel_csv\kp=0.1--ki=0.06--kd=0.2\kp=0.1--ki=0.06--kd=0.2.csv",opts);
 % analyze_overshoot("excel_csv\still_circle_2\mystill_circle_2.csv");
