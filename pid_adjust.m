@@ -7,8 +7,8 @@ addpath("filiter\");
 addpath("excel_csv\still_circle_waypoints\");
 addpath("excel_csv\test9\");
 addpath("function\pid\")
-% opts =struct('output_dir','excel_csv\zhen','output_name','rt_tar_2');
-% my_flitter("excel_csv\rt_tar_2.csv",opts)
+opts =struct('output_dir','excel_csv\zhen','output_name','rt_tar_2');
+my_flitter("excel_csv\rt_tar_2.csv",opts)
 
 opts.X.Kp_base = 0.1;
 opts.Y.Kp_base = 0.1;

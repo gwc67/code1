@@ -19,6 +19,13 @@ function plot_radar_3d(csv_file, varargin)
 %   目标点:     X,Y,Z (指令速度/实时目标速度仅雷达轨迹有意义)
 %   (对应列为可选，缺失时自动跳过)
 %
+% 悬停动态箭头 - 鼠标悬停雷达轨迹点时自动显示:
+%   蓝色箭头  = CMD 指令速度 (CMD_SPEED_X/Y 勾股合成)
+%   红色箭头  = RT_TAR 实时目标速度 (rt_tar_vel_x/y 勾股合成)
+%   品红箭头  = FC_SEN 传感器实测速度 (fc_sen_vel_x/y 勾股合成)
+%   青绿箭头  = YAW 机头朝向 (四元数解算)
+%   箭头旁标注含正负号的勾股速度大小 (m/s)
+%
 % 示例:
 %   plot_radar_3d('radar_data.csv');
 %   plot_radar_3d('data.csv', 'LineWidth', 3, 'MarkerSize', 100, 'Title', '实验1');
@@ -110,6 +117,15 @@ else
     params.ShowYaw = false;
 end
 
+% FC_SEN 传感器实测速度
+hasFcSen = false;
+fc_sen_x = [];  fc_sen_y = [];
+if ismember('fc_sen_vel_x', vars) && ismember('fc_sen_vel_y', vars)
+    fc_sen_x = data.fc_sen_vel_x;
+    fc_sen_y = data.fc_sen_vel_y;
+    hasFcSen = true;
+end
+
 %% ==== 创建三维图形 ====
 figure('Position', [100, 100, 1200, 800], 'Color', 'white');
 hold on;
@@ -153,6 +169,19 @@ h_yaw = quiver3(NaN, NaN, NaN, NaN, NaN, NaN, 0, ...
     'Color', [0 0.7 0.5], 'LineWidth', 2.0, 'MaxHeadSize', 0.7, ...
     'DisplayName', 'YAW Heading', 'Visible', 'off');
 
+% FC_SEN 传感器实测速度箭头 — 品红
+h_fc = quiver3(NaN, NaN, NaN, NaN, NaN, NaN, 0, ...
+    'Color', [1 0 0.6], 'LineWidth', 2.0, 'MaxHeadSize', 0.7, ...
+    'DisplayName', 'FC SEN Speed', 'Visible', 'off');
+
+%% ==== 预创建速度标注文本 (初始不可见) ====
+txt_cmd = text(NaN, NaN, NaN, '', 'Color', 'b', 'FontSize', 10, ...
+    'FontWeight', 'bold', 'BackgroundColor', [1 1 1 0.7], 'Visible', 'off');
+txt_rt  = text(NaN, NaN, NaN, '', 'Color', 'r', 'FontSize', 10, ...
+    'FontWeight', 'bold', 'BackgroundColor', [1 1 1 0.7], 'Visible', 'off');
+txt_fc  = text(NaN, NaN, NaN, '', 'Color', [1 0 0.6], 'FontSize', 10, ...
+    'FontWeight', 'bold', 'BackgroundColor', [1 1 1 0.7], 'Visible', 'off');
+
 %% ==== 缓存数据到 figure, 设置鼠标悬停回调 ====
 fig = gcf;
 ud.radar_x  = radar_x;
@@ -166,10 +195,17 @@ ud.yaw_rad  = yaw_rad;
 ud.hasCmdSpd = hasCmdSpd;
 ud.hasRtTar  = hasRtTar;
 ud.hasQuat   = hasQuat;
+ud.hasFcSen  = hasFcSen;
+ud.fc_x    = fc_sen_x;
+ud.fc_y    = fc_sen_y;
 ud.span_xy   = span_xy;
 ud.h_cmd   = h_cmd;
 ud.h_rt    = h_rt;
 ud.h_yaw   = h_yaw;
+ud.h_fc    = h_fc;
+ud.txt_cmd = txt_cmd;
+ud.txt_rt  = txt_rt;
+ud.txt_fc  = txt_fc;
 ud.lastIdx = 0;
 ud.hoverThreshold = max(span_xy * 0.03, span_xy * 0.001 + 0.5);
 fig.UserData = ud;
@@ -305,7 +341,7 @@ end
 
 %% -------------------------------------------------------------------------
 function updateArrows(ud, idx)
-% 更新三组 quiver3 箭头到指定数据点
+% 更新 quiver3 箭头 + 速度标注文本到指定数据点
     scale = ud.span_xy * 0.005;   % 速度 -> 箭头长度 缩放
 
     % --- CMD 速度箭头 (蓝色) ---
@@ -313,9 +349,17 @@ function updateArrows(ud, idx)
         cmd_mag = sqrt(ud.cmd_x(idx)^2 + ud.cmd_y(idx)^2);
         cmd_ang = atan2(ud.cmd_y(idx), ud.cmd_x(idx));
         len = cmd_mag * scale;
+        u_cmd = len * cos(cmd_ang);
+        v_cmd = len * sin(cmd_ang);
         set(ud.h_cmd, ...
             'XData', ud.radar_x(idx), 'YData', ud.radar_y(idx), 'ZData', ud.radar_z(idx), ...
-            'UData', len * cos(cmd_ang), 'VData', len * sin(cmd_ang), 'WData', 0, ...
+            'UData', u_cmd, 'VData', v_cmd, 'WData', 0, ...
+            'Visible', 'on');
+        % 标注：带正负号的勾股速度 (正负由 X 分量决定)
+        signed_mag = sign(ud.cmd_x(idx)) * cmd_mag;
+        set(ud.txt_cmd, ...
+            'Position', [ud.radar_x(idx)+u_cmd, ud.radar_y(idx)+v_cmd, ud.radar_z(idx)+0.5], ...
+            'String', sprintf('CMD: %+.2f m/s', signed_mag), ...
             'Visible', 'on');
     end
 
@@ -324,13 +368,38 @@ function updateArrows(ud, idx)
         rt_mag = sqrt(ud.rt_x(idx)^2 + ud.rt_y(idx)^2);
         rt_ang = atan2(ud.rt_y(idx), ud.rt_x(idx));
         len = rt_mag * scale;
+        u_rt = len * cos(rt_ang);
+        v_rt = len * sin(rt_ang);
         set(ud.h_rt, ...
             'XData', ud.radar_x(idx), 'YData', ud.radar_y(idx), 'ZData', ud.radar_z(idx), ...
-            'UData', len * cos(rt_ang), 'VData', len * sin(rt_ang), 'WData', 0, ...
+            'UData', u_rt, 'VData', v_rt, 'WData', 0, ...
+            'Visible', 'on');
+        signed_mag = sign(ud.rt_x(idx)) * rt_mag;
+        set(ud.txt_rt, ...
+            'Position', [ud.radar_x(idx)+u_rt, ud.radar_y(idx)+v_rt, ud.radar_z(idx)-0.5], ...
+            'String', sprintf('RT: %+.2f m/s', signed_mag), ...
             'Visible', 'on');
     end
 
-    % --- YAW 机头朝向箭头 (青绿) ---
+    % --- FC_SEN 传感器实测速度箭头 (品红) ---
+    if ud.hasFcSen
+        fc_mag = sqrt(ud.fc_x(idx)^2 + ud.fc_y(idx)^2);
+        fc_ang = atan2(ud.fc_y(idx), ud.fc_x(idx));
+        len = fc_mag * scale;
+        u_fc = len * cos(fc_ang);
+        v_fc = len * sin(fc_ang);
+        set(ud.h_fc, ...
+            'XData', ud.radar_x(idx), 'YData', ud.radar_y(idx), 'ZData', ud.radar_z(idx), ...
+            'UData', u_fc, 'VData', v_fc, 'WData', 0, ...
+            'Visible', 'on');
+        signed_mag = sign(ud.fc_x(idx)) * fc_mag;
+        set(ud.txt_fc, ...
+            'Position', [ud.radar_x(idx)+u_fc, ud.radar_y(idx)+v_fc, ud.radar_z(idx)], ...
+            'String', sprintf('FCS: %+.2f m/s', signed_mag), ...
+            'Visible', 'on');
+    end
+
+    % --- YAW 机头朝向箭头 (青绿, 固定长度) ---
     if ud.hasQuat
         fixedLen = ud.span_xy * 0.02;
         ang = ud.yaw_rad(idx);
@@ -344,9 +413,13 @@ end
 
 %% -------------------------------------------------------------------------
 function hideArrows(ud)
-% 隐藏所有悬停箭头
+% 隐藏所有悬停箭头 + 速度标注文本
     set(ud.h_cmd,  'Visible', 'off');
     set(ud.h_rt,   'Visible', 'off');
     set(ud.h_yaw,  'Visible', 'off');
+    set(ud.h_fc,   'Visible', 'off');
+    set(ud.txt_cmd, 'Visible', 'off');
+    set(ud.txt_rt,  'Visible', 'off');
+    set(ud.txt_fc,  'Visible', 'off');
     drawnow limitrate;
 end
