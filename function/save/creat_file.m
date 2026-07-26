@@ -1,5 +1,8 @@
 %输出文件
 function outPath = creat_file(mat,col_name,csv_path_raw,opts)
+    if nargin < 4 || isempty(opts)
+        opts = struct('output_dir',[],'output_name',[]);
+    end
     if isempty(opts.output_dir)
         outDir = fileparts(csv_path_raw);
     else 

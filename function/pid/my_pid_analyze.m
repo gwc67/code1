@@ -55,6 +55,9 @@ function result = my_pid_analyze(csv_path,pid_params,tuning_mode)
     state_z = [];  %Z轴独立PID状态
     cmd_vel_sim = zeros(row_raw_num,3); %仿真输出XYZ速度(雷达系)
     cmd_vel_body_sim = zeros(row_raw_num,3); %仿真输出 经四元数旋转后的机体系速度
+    length = zeros(row_raw_num,2);
+    cmd_raw_xy_nums = zeros(row_raw_num,2);
+
 
     has_quat = isfield(data_raw, 'quat') && ~isempty(data_raw.quat);
     if has_quat
@@ -75,7 +78,7 @@ function result = my_pid_analyze(csv_path,pid_params,tuning_mode)
 
         dt_k = dt_array(k) * 1000; % C代码 xTaskGetTickCount() 单位是 tick(1tick=1ms)，需将秒转换为tick单位
 
-        [cmd_xy,rot_state] = pos_cmd_st(...
+        [cmd_raw_xy , length_xy,cmd_xy,rot_state] = pos_cmd_st(...
             pid.X,pid.Y,...
             measurement,setpoint,...
             rot_state,...
@@ -86,6 +89,8 @@ function result = my_pid_analyze(csv_path,pid_params,tuning_mode)
         cmd_vel_sim(k,1:2) = cmd_xy;
         cmd_vel_sim(k,3) = cmd_z;
 
+        length(k,1:2) = length_xy;
+        cmd_raw_xy_nums(k,1:2) = cmd_raw_xy;
         % === 四元数旋转: 雷达系速度 → 机体系速度 (复刻 s_cmd_vel_consume_v) ===
         if has_quat
             q = quat(k, :);  % [qw, qx, qy, qz]
@@ -169,7 +174,11 @@ function result = my_pid_analyze(csv_path,pid_params,tuning_mode)
 
            result.yaw_deg = yaw_deg;
        end
+ 
 
+       mat = [length,cmd_raw_xy_nums];
+       col_names = {'length_x','length_y','cmd_raw_x','cmd_raw_y'};
+       creat_file(mat,col_names,csv_path);
         
 
 end
@@ -408,7 +417,7 @@ function [out,state] = pid_simulate(pid_ax,setpoint,measurement,state,dt)
 end
 
 %% 传入的是单行的数据
-function [cmd_vel_out,state_out] = pos_cmd_st(pid_x,pid_y,...
+function [cmd_raw_xy,length,cmd_vel_out,state_out] = pos_cmd_st(pid_x,pid_y,...
                             radar_pos,target_pos,rot_state,dt)
 
     radar_pos_xy = radar_pos(1:2);
@@ -465,12 +474,17 @@ function [cmd_vel_out,state_out] = pos_cmd_st(pid_x,pid_y,...
     length_x = pos_modulus* cos(rot_state.theta_1 - theta_2);
     length_y = pos_modulus* sin(rot_state.theta_1 - theta_2);
 
+    
+
     state_X = rot_state.state_X;
     state_Y = rot_state.state_Y;
 
     [cmd_x,state_X] = pid_simulate(pid_x,rot_state.setpoint_modulus,length_x,state_X,dt);
     [cmd_y,state_Y] = pid_simulate(pid_y,0,length_y,state_Y,dt);
 
+    length = [rot_state.setpoint_modulus - length_x,-length_y];
+    cmd_raw_xy = [cmd_x,cmd_y];
+    
     cmd_vel_out = zeros(1,2);
     cmd_vel_out(1) = cmd_x * cos(rot_state.theta_1) + cmd_y * sin(rot_state.theta_1);
     cmd_vel_out(2) = cmd_x * sin(rot_state.theta_1) - cmd_y * cos(rot_state.theta_1);

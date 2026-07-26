@@ -175,7 +175,14 @@ function outPath = saveOutput(mat,col_name,csv_path_raw,opts)
         [~,baseName,~] = fileparts(csv_path_raw);
         outName = [ char(baseName),'_filtered'];
     else
+        % 防御：如果 output_name 包含路径分隔符或盘符，只取文件名
         outName = char(opts.output_name);
+        [~,nameOnly,extOnly] = fileparts(outName);
+        if ~isempty(extOnly)
+            outName = [nameOnly, extOnly];
+        else
+            outName = nameOnly;
+        end
     end
 
     outPath = char(fullfile(outDir,[outName,'.csv'])); %输出的文件名字
