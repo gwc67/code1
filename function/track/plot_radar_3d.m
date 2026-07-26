@@ -171,7 +171,7 @@ ud.h_cmd   = h_cmd;
 ud.h_rt    = h_rt;
 ud.h_yaw   = h_yaw;
 ud.lastIdx = 0;
-ud.hoverThreshold = span_xy * 0.03;
+ud.hoverThreshold = max(span_xy * 0.03, span_xy * 0.001 + 0.5);
 fig.UserData = ud;
 
 set(fig, 'WindowButtonMotionFcn', @(src, ~) onRadarHover(src));
@@ -266,26 +266,35 @@ function onRadarHover(fig)
     ax = fig.CurrentAxes;
     if isempty(ax), return; end
 
-    % 获取鼠标在 axes 中的 3D 坐标
-    cp = ax.CurrentPoint;       % 2×3: [前表面; 后表面]
-    mouse = cp(1, :);           % [x, y, z]
+    % 获取视线射线: CurrentPoint 返回 [前点; 后点] 定义一条穿过 axes 的线
+    cp = ax.CurrentPoint;       % 2×3: [front_x front_y front_z; back_x back_y back_z]
+    pFront = cp(1, :);
+    pBack  = cp(2, :);
+    v = pBack - pFront;         % 视线方向
+    vLenSq = sum(v.^2);
+    if vLenSq < eps, return; end
 
-    % 最近邻搜索 (向量化)
-    dx = ud.radar_x - mouse(1);
-    dy = ud.radar_y - mouse(2);
-    dz = ud.radar_z - mouse(3);
-    [minDist, idx] = min(dx.^2 + dy.^2 + dz.^2);
-    minDist = sqrt(minDist);
+    % 向量化: 计算所有轨迹点到视线的垂直距离
+    %  d = |(P - pFront) × v| / |v|
+    wx = ud.radar_x - pFront(1);
+    wy = ud.radar_y - pFront(2);
+    wz = ud.radar_z - pFront(3);
+
+    % 叉积 w × v
+    cx = wy .* v(3) - wz .* v(2);
+    cy = wz .* v(1) - wx .* v(3);
+    cz = wx .* v(2) - wy .* v(1);
+
+    dists = sqrt(cx.^2 + cy.^2 + cz.^2) / sqrt(vLenSq);
+    [minDist, idx] = min(dists);
 
     if minDist < ud.hoverThreshold
-        % 鼠标靠近某个数据点
         if idx ~= ud.lastIdx
             ud.lastIdx = idx;
             fig.UserData = ud;
             updateArrows(ud, idx);
         end
     else
-        % 鼠标远离
         if ud.lastIdx ~= 0
             ud.lastIdx = 0;
             fig.UserData = ud;
@@ -330,6 +339,7 @@ function updateArrows(ud, idx)
             'UData', fixedLen * cos(ang), 'VData', fixedLen * sin(ang), 'WData', 0, ...
             'Visible', 'on');
     end
+    drawnow limitrate;
 end
 
 %% -------------------------------------------------------------------------
@@ -338,4 +348,5 @@ function hideArrows(ud)
     set(ud.h_cmd,  'Visible', 'off');
     set(ud.h_rt,   'Visible', 'off');
     set(ud.h_yaw,  'Visible', 'off');
+    drawnow limitrate;
 end
