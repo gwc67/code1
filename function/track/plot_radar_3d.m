@@ -174,13 +174,10 @@ h_fc = quiver3(NaN, NaN, NaN, NaN, NaN, NaN, 0, ...
     'Color', [1 0 0.6], 'LineWidth', 2.0, 'MaxHeadSize', 0.7, ...
     'DisplayName', 'FC SEN Speed', 'Visible', 'off');
 
-%% ==== 预创建速度标注文本 (初始不可见) ====
-txt_cmd = text(NaN, NaN, NaN, '', 'Color', 'b', 'FontSize', 10, ...
-    'FontWeight', 'bold', 'BackgroundColor', [1 1 1 0.7], 'Visible', 'off');
-txt_rt  = text(NaN, NaN, NaN, '', 'Color', 'r', 'FontSize', 10, ...
-    'FontWeight', 'bold', 'BackgroundColor', [1 1 1 0.7], 'Visible', 'off');
-txt_fc  = text(NaN, NaN, NaN, '', 'Color', [1 0 0.6], 'FontSize', 10, ...
-    'FontWeight', 'bold', 'BackgroundColor', [1 1 1 0.7], 'Visible', 'off');
+%% ==== 预创建合并速度标注 (单行 TeX 彩色, 初始不可见) ====
+txt_info = text(NaN, NaN, NaN, '', 'Interpreter', 'tex', 'FontSize', 10, ...
+    'FontWeight', 'bold', 'BackgroundColor', [1 1 1 0.85], ...
+    'EdgeColor', [0.3 0.3 0.3], 'Margin', 3, 'Visible', 'off');
 
 %% ==== 缓存数据到 figure, 设置鼠标悬停回调 ====
 fig = gcf;
@@ -203,9 +200,7 @@ ud.h_cmd   = h_cmd;
 ud.h_rt    = h_rt;
 ud.h_yaw   = h_yaw;
 ud.h_fc    = h_fc;
-ud.txt_cmd = txt_cmd;
-ud.txt_rt  = txt_rt;
-ud.txt_fc  = txt_fc;
+ud.txt_info = txt_info;
 ud.lastIdx = 0;
 ud.hoverThreshold = max(span_xy * 0.03, span_xy * 0.001 + 0.5);
 fig.UserData = ud;
@@ -341,25 +336,19 @@ end
 
 %% -------------------------------------------------------------------------
 function updateArrows(ud, idx)
-% 更新 quiver3 箭头 + 速度标注文本到指定数据点
+% 更新 quiver3 箭头 + 合并速度标注到指定数据点
+%   标注用 TeX 彩色单行放置在雷达点固定偏移处，绝不重叠
     scale = ud.span_xy * 0.005;   % 速度 -> 箭头长度 缩放
+    dOff = ud.span_xy * 0.06;              % 标注 XY+Z 偏移，远离箭头
 
     % --- CMD 速度箭头 (蓝色) ---
     if ud.hasCmdSpd
         cmd_mag = sqrt(ud.cmd_x(idx)^2 + ud.cmd_y(idx)^2);
         cmd_ang = atan2(ud.cmd_y(idx), ud.cmd_x(idx));
         len = cmd_mag * scale;
-        u_cmd = len * cos(cmd_ang);
-        v_cmd = len * sin(cmd_ang);
         set(ud.h_cmd, ...
             'XData', ud.radar_x(idx), 'YData', ud.radar_y(idx), 'ZData', ud.radar_z(idx), ...
-            'UData', u_cmd, 'VData', v_cmd, 'WData', 0, ...
-            'Visible', 'on');
-        % 标注：带正负号的勾股速度 (正负由 X 分量决定)
-        signed_mag = sign(ud.cmd_x(idx)) * cmd_mag;
-        set(ud.txt_cmd, ...
-            'Position', [ud.radar_x(idx)+u_cmd, ud.radar_y(idx)+v_cmd, ud.radar_z(idx)+0.5], ...
-            'String', sprintf('CMD: %+.2f m/s', signed_mag), ...
+            'UData', len * cos(cmd_ang), 'VData', len * sin(cmd_ang), 'WData', 0, ...
             'Visible', 'on');
     end
 
@@ -368,34 +357,20 @@ function updateArrows(ud, idx)
         rt_mag = sqrt(ud.rt_x(idx)^2 + ud.rt_y(idx)^2);
         rt_ang = atan2(ud.rt_y(idx), ud.rt_x(idx));
         len = rt_mag * scale;
-        u_rt = len * cos(rt_ang);
-        v_rt = len * sin(rt_ang);
         set(ud.h_rt, ...
             'XData', ud.radar_x(idx), 'YData', ud.radar_y(idx), 'ZData', ud.radar_z(idx), ...
-            'UData', u_rt, 'VData', v_rt, 'WData', 0, ...
-            'Visible', 'on');
-        signed_mag = sign(ud.rt_x(idx)) * rt_mag;
-        set(ud.txt_rt, ...
-            'Position', [ud.radar_x(idx)+u_rt, ud.radar_y(idx)+v_rt, ud.radar_z(idx)-0.5], ...
-            'String', sprintf('RT: %+.2f m/s', signed_mag), ...
+            'UData', len * cos(rt_ang), 'VData', len * sin(rt_ang), 'WData', 0, ...
             'Visible', 'on');
     end
 
-    % --- FC_SEN 传感器实测速度箭头 (品红) ---
+    % --- FC_SEN 传感器实测速度箭头 (品红, 机头系速度直接绘制) ---
     if ud.hasFcSen
         fc_mag = sqrt(ud.fc_x(idx)^2 + ud.fc_y(idx)^2);
         fc_ang = atan2(ud.fc_y(idx), ud.fc_x(idx));
         len = fc_mag * scale;
-        u_fc = len * cos(fc_ang);
-        v_fc = len * sin(fc_ang);
         set(ud.h_fc, ...
             'XData', ud.radar_x(idx), 'YData', ud.radar_y(idx), 'ZData', ud.radar_z(idx), ...
-            'UData', u_fc, 'VData', v_fc, 'WData', 0, ...
-            'Visible', 'on');
-        signed_mag = sign(ud.fc_x(idx)) * fc_mag;
-        set(ud.txt_fc, ...
-            'Position', [ud.radar_x(idx)+u_fc, ud.radar_y(idx)+v_fc, ud.radar_z(idx)], ...
-            'String', sprintf('FCS: %+.2f m/s', signed_mag), ...
+            'UData', len * cos(fc_ang), 'VData', len * sin(fc_ang), 'WData', 0, ...
             'Visible', 'on');
     end
 
@@ -408,18 +383,40 @@ function updateArrows(ud, idx)
             'UData', fixedLen * cos(ang), 'VData', fixedLen * sin(ang), 'WData', 0, ...
             'Visible', 'on');
     end
+
+    % --- 合并速度标注 (TeX 彩色单行, 置于雷达点上方) ---
+    parts = {};
+    if ud.hasCmdSpd
+        cmd_mag = sqrt(ud.cmd_x(idx)^2 + ud.cmd_y(idx)^2);
+        cmd_signed = sign(ud.cmd_x(idx)) * cmd_mag;
+        parts{end+1} = sprintf('\\color[rgb]{0,0,1}CMD:%+.2f', cmd_signed);
+    end
+    if ud.hasRtTar
+        rt_mag = sqrt(ud.rt_x(idx)^2 + ud.rt_y(idx)^2);
+        rt_signed = sign(ud.rt_x(idx)) * rt_mag;
+        parts{end+1} = sprintf('\\color[rgb]{1,0,0}RT:%+.2f', rt_signed);
+    end
+    if ud.hasFcSen
+        fc_mag = sqrt(ud.fc_x(idx)^2 + ud.fc_y(idx)^2);
+        fc_signed = sign(ud.fc_x(idx)) * fc_mag;
+        parts{end+1} = sprintf('\\color[rgb]{1,0,0.6}FCS:%+.2f', fc_signed);
+    end
+    if ~isempty(parts)
+        set(ud.txt_info, ...
+            'Position', [ud.radar_x(idx)+dOff, ud.radar_y(idx)+dOff, ud.radar_z(idx)+dOff], ...
+            'String', strjoin(parts, '  |  '), ...
+            'Visible', 'on');
+    end
     drawnow limitrate;
 end
 
 %% -------------------------------------------------------------------------
 function hideArrows(ud)
-% 隐藏所有悬停箭头 + 速度标注文本
+% 隐藏所有悬停箭头 + 合并标注
     set(ud.h_cmd,  'Visible', 'off');
     set(ud.h_rt,   'Visible', 'off');
     set(ud.h_yaw,  'Visible', 'off');
     set(ud.h_fc,   'Visible', 'off');
-    set(ud.txt_cmd, 'Visible', 'off');
-    set(ud.txt_rt,  'Visible', 'off');
-    set(ud.txt_fc,  'Visible', 'off');
+    set(ud.txt_info, 'Visible', 'off');
     drawnow limitrate;
 end
