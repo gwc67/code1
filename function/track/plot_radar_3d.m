@@ -138,7 +138,7 @@ h_radar = plot3(radar_x, radar_y, radar_z, [params.RadarColor '-'], ...
 % 配置雷达轨迹的悬停数据提示
 if hasCmdSpd || hasRtTar || hasQuat
     cfgRadarDataTips(h_radar, hasCmdSpd, hasRtTar, hasQuat, ...
-        cmd_spd_x, cmd_spd_y, rt_tar_x, rt_tar_y, yaw_deg);
+        cmd_spd_x, cmd_spd_y, rt_tar_x, rt_tar_y, yaw_deg,fc_sen_x,fc_sen_y);
 end
 
 %% ==== 绘制目标点 ====
@@ -249,7 +249,7 @@ end
 %  鼠标悬停时自动显示这些额外数据
 % =========================================================================
 function cfgRadarDataTips(h, hasCmdSpd, hasRtTar, hasQuat, ...
-    cmd_x, cmd_y, rt_tar_x, rt_tar_y, yaw_deg)
+    cmd_x, cmd_y, rt_tar_x, rt_tar_y, yaw_deg,fc_sen_x,fc_sen_y)
     dt = h.DataTipTemplate;
 
     if hasCmdSpd
@@ -275,7 +275,14 @@ function cfgRadarDataTips(h, hasCmdSpd, hasRtTar, hasQuat, ...
         r5.Format = '%.1f°';
         dt.DataTipRows(end+1) = r5;
     end
+        r6 = dataTipTextRow('fc_sen_x', fc_sen_x);
+        r6.Format = '%.1f°';
+        dt.DataTipRows(end+1) = r6;
 
+        r7 = dataTipTextRow('fc_sen_y', fc_sen_y);
+        r7.Format = '%.1f°';
+        dt.DataTipRows(end+1) = r7;
+        
     % 重命名默认 X,Y,Z 行带单位
     dt.DataTipRows(1).Label = 'X';
     dt.DataTipRows(1).Format = '%.3f m';
@@ -337,11 +344,11 @@ end
 %% -------------------------------------------------------------------------
 function updateArrows(ud, idx)
 % 更新 quiver3 箭头 + 合并速度标注到指定数据点
-%   标注用 TeX 彩色单行放置在雷达点固定偏移处，绝不重叠
+%   cmd: 世界系 | rt: 机头系 | fc: 机头系
     scale = ud.span_xy * 0.005;   % 速度 -> 箭头长度 缩放
     dOff = ud.span_xy * 0.06;              % 标注 XY+Z 偏移，远离箭头
 
-    % --- CMD 速度箭头 (蓝色) ---
+    % --- CMD 速度箭头 (蓝色, 世界系 -> 直接绘制) ---
     if ud.hasCmdSpd
         cmd_mag = sqrt(ud.cmd_x(idx)^2 + ud.cmd_y(idx)^2);
         cmd_ang = atan2(ud.cmd_y(idx), ud.cmd_x(idx));
@@ -352,10 +359,21 @@ function updateArrows(ud, idx)
             'Visible', 'on');
     end
 
-    % --- RT_TAR 速度箭头 (红色) ---
+    % --- RT_TAR 速度箭头 (红色, 机头系 -> 需要旋转到世界系) ---
     if ud.hasRtTar
-        rt_mag = sqrt(ud.rt_x(idx)^2 + ud.rt_y(idx)^2);
-        rt_ang = atan2(ud.rt_y(idx), ud.rt_x(idx));
+        % ✅ 修改: 机头系分量
+        rt_bx = ud.rt_x(idx);
+        rt_by = ud.rt_y(idx);
+        
+        % ✅ 修改: 用 yaw 旋转到世界/雷达显示系
+        cy = cos(ud.yaw_rad(idx));
+        sy = sin(ud.yaw_rad(idx));
+        rt_wx = rt_bx * cy - rt_by * sy;
+        rt_wy = rt_bx * sy + rt_by * cy;
+        
+        rt_mag = sqrt(rt_wx^2 + rt_wy^2);
+        rt_ang = atan2(rt_wy, rt_wx);   % ✅ 修改: 世界系绝对角度
+        
         len = rt_mag * scale;
         set(ud.h_rt, ...
             'XData', ud.radar_x(idx), 'YData', ud.radar_y(idx), 'ZData', ud.radar_z(idx), ...
@@ -363,10 +381,19 @@ function updateArrows(ud, idx)
             'Visible', 'on');
     end
 
-    % --- FC_SEN 传感器实测速度箭头 (品红, 机头系速度直接绘制) ---
+    % --- FC_SEN 传感器实测速度箭头 (品红, 机头系 -> 显示系) ---
     if ud.hasFcSen
-        fc_mag = sqrt(ud.fc_x(idx)^2 + ud.fc_y(idx)^2);
-        fc_ang = atan2(ud.fc_y(idx), ud.fc_x(idx));
+        fc_bx = ud.fc_x(idx);
+        fc_by = ud.fc_y(idx);
+        
+        cy = cos(ud.yaw_rad(idx));
+        sy = sin(ud.yaw_rad(idx));
+        fc_wx = fc_bx * cy - fc_by * sy;  
+        fc_wy = fc_bx * sy + fc_by * cy;  
+        
+        fc_mag = sqrt(fc_wx^2 + fc_wy^2);
+        fc_ang = atan2(fc_wy, fc_wx);     
+        
         len = fc_mag * scale;
         set(ud.h_fc, ...
             'XData', ud.radar_x(idx), 'YData', ud.radar_y(idx), 'ZData', ud.radar_z(idx), ...
@@ -388,17 +415,18 @@ function updateArrows(ud, idx)
     parts = {};
     if ud.hasCmdSpd
         cmd_mag = sqrt(ud.cmd_x(idx)^2 + ud.cmd_y(idx)^2);
-        cmd_signed = sign(ud.cmd_x(idx)) * cmd_mag;
+        cmd_signed = sign(ud.cmd_x(idx)) * cmd_mag;   % 世界系X分量符号
         parts{end+1} = sprintf('\\color[rgb]{0,0,1}CMD:%+.2f', cmd_signed);
     end
     if ud.hasRtTar
         rt_mag = sqrt(ud.rt_x(idx)^2 + ud.rt_y(idx)^2);
-        rt_signed = sign(ud.rt_x(idx)) * rt_mag;
+        rt_signed = sign(ud.rt_x(idx)) * rt_mag;      % ✅ 机头系X(纵向)分量符号，物理含义正确
         parts{end+1} = sprintf('\\color[rgb]{1,0,0}RT:%+.2f', rt_signed);
     end
     if ud.hasFcSen
         fc_mag = sqrt(ud.fc_x(idx)^2 + ud.fc_y(idx)^2);
-        fc_signed = sign(ud.fc_x(idx)) * fc_mag;
+        % 当 fc_x >= 0 时，符号为 1；当 fc_x < 0 时，符号为 -1。完美避开 0 的坑！
+        fc_signed = (ud.fc_x(idx) >= 0) * fc_mag - (ud.fc_x(idx) < 0) * fc_mag;
         parts{end+1} = sprintf('\\color[rgb]{1,0,0.6}FCS:%+.2f', fc_signed);
     end
     if ~isempty(parts)
