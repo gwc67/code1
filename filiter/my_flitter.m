@@ -106,6 +106,9 @@ end
 %  批量处理文件夹内所有 .csv 文件（覆盖写入原文件）
 % =========================================================================
 function result = batchProcess(dirPath, options)
+    if nargin < 2 || isempty(options)
+        options = struct();
+    end
     files = dir(fullfile(dirPath, '*.csv'));
     if isempty(files)
         error('文件夹 %s 中没有 CSV 文件', dirPath);
@@ -126,11 +129,11 @@ function result = batchProcess(dirPath, options)
             continue;
         end
 
-        % 构建覆盖选项: output 直接指向原文件位置
+        % 构建输出选项: 每个文件在自己的子文件夹中
         [~, nameOnly] = fileparts(csvPath);
         batchOpts = options;
-        batchOpts.output_dir = dirPath;
-        batchOpts.output_name = nameOnly;  % 同名覆盖
+        batchOpts.output_dir = fullfile(dirPath, nameOnly);  % 以文件名创建子文件夹
+        batchOpts.output_name = nameOnly;  % 同名文件
 
         try
             r = processOneFile(csvPath, batchOpts);

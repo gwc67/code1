@@ -19,8 +19,8 @@ opts.X.Kd_base = 0.3;
 opts.Y.Kd_base = 0.3;
 
 % my_pid_analyze("excel_csv\zhen\3s.csv",opts);
-plot_radar_3d('excel_csv\zhen\3s.csv');
-% play_radar_3d_2('excel_csv\ki-0.13-kd-0.34-radar\1.csv');
+% plot_radar_3d('excel_csv\zhen\3s.csv');
+play_radar_3d_2('excel_csv\ki-0.13-kd-0.34-radar\1.csv');
 % analyze_overshoot("D:\Documents\MATLAB\code1\excel_csv\kkp=0.1--ki=0.06--kd=0.2_2\kp=0.1--ki=0.06--kd=0.2_2.csv");
 % result = mathematical_pid_analysis('D:\Documents\MATLAB\code1\excel_csv\kkp=0.1--ki=0.06--kd=0.2_2\kp=0.1--ki=0.06--kd=0.2_2.csv');
 
