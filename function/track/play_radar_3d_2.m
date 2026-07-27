@@ -414,23 +414,34 @@ function updateFrame(fig, idx)
         updateArrow3D(ud.h_yaw, origin, [cos(ang), sin(ang), 0], yawLen, headFrac);
     end
     
-    % 4. 更新速度标注文本
+       % 4. 更新速度标注文本 (修复: sign(0)导致速度归零的问题)
     parts = {};
+    
     if ud.hasCmd
         cmd_mag = sqrt(ud.cmd_x(idx)^2 + ud.cmd_y(idx)^2);
-        cmd_signed = sign(ud.cmd_x(idx)) * cmd_mag;
+        % 优先取X符号，X为0时取Y符号，避免sign(0)=0吞掉速度
+        s = sign(ud.cmd_x(idx));
+        if s == 0, s = sign(ud.cmd_y(idx)); end
+        cmd_signed = s * cmd_mag;
         parts{end+1} = sprintf('\\color[rgb]{0.2,0.4,1}CMD:%+.2f', cmd_signed);
     end
+    
     if ud.hasRt
         rt_mag = sqrt(ud.rt_x(idx)^2 + ud.rt_y(idx)^2);
-        rt_signed = sign(ud.rt_x(idx)) * rt_mag;
+        s = sign(ud.rt_x(idx));
+        if s == 0, s = sign(ud.rt_y(idx)); end
+        rt_signed = s * rt_mag;
         parts{end+1} = sprintf('\\color[rgb]{1,0.2,0.2}RT:%+.2f', rt_signed);
     end
+    
     if ud.hasFc
         fc_mag = sqrt(ud.fc_x(idx)^2 + ud.fc_y(idx)^2);
-        fc_signed = (ud.fc_x(idx) >= 0) * fc_mag - (ud.fc_x(idx) < 0) * fc_mag;
+        s = sign(ud.fc_x(idx));
+        if s == 0, s = sign(ud.fc_y(idx)); end
+        fc_signed = s * fc_mag;
         parts{end+1} = sprintf('\\color[rgb]{1,0,0.6}FCS:%+.2f', fc_signed);
     end
+    
     if ud.hasQuat
         parts{end+1} = sprintf('\\color[rgb]{0,0.8,0.5}YAW:%+.1f°', rad2deg(ud.yaw_rad(idx)));
     end
