@@ -127,7 +127,7 @@ if ismember('fc_sen_vel_x', vars) && ismember('fc_sen_vel_y', vars)
 end
 
 %% ==== 创建三维图形 ====
-figure('Position', [100, 100, 1200, 800], 'Color', 'white');
+figure('Position', [100, 100, 1200, 800], 'Color', 'black');
 hold on;
 
 %% ==== 绘制雷达轨迹 (保留句柄用于配置 DataTip) ====
