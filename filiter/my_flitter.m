@@ -1,12 +1,25 @@
 function result = my_flitter(csvPath,options)
 
-    
+
     if nargin < 1 || isempty(csvPath)
         csvPath = fullfile(fileparts(mfilename("fullpath")),'..','excel_csv','still_circle.csv');           %为什么制定的是still_circle.csv?
         disp("启用默认配置文件")
         csvPath = char(csvPath);
-    end     
+    end
     csvPath = char(csvPath);
+
+    % 如果传入的是文件夹，批量处理所有 .csv 文件
+    if isfolder(csvPath)
+        result = batchProcess(csvPath, options);
+        return;
+    end
+
+    % 单个文件处理流程
+    result = processOneFile(csvPath, options);
+end
+
+function result = processOneFile(csvPath, options)
+% 处理单个 CSV 文件（原有逻辑移入此函数）
     if nargin < 2 || isempty(options)
         options = struct();            % 如果调用时不传第二个参数，或者传了空，就手动创建一个空结构体；
     end
@@ -14,11 +27,19 @@ function result = my_flitter(csvPath,options)
     opts.output_dir = '';
     opts.output_name = '';
 
-    flds = fieldnames(options);         
+    flds = fieldnames(options);
     for i = 1 : length(flds)            %循环覆盖默认参数
-        oldvalue = opts.(flds{i});
-        opts.(flds{i}) = options.(flds{i});
-        fprintf('更新参数[%s] : 旧值= %g -> 新值=%g\n',flds{i},oldvalue,opts.(flds{i}));
+        if isfield(opts, flds{i})
+            oldvalue = opts.(flds{i});
+            opts.(flds{i}) = options.(flds{i});
+            if ischar(oldvalue)
+                fprintf('更新参数[%s] : 旧值= %s -> 新值=%s\n',flds{i},oldvalue,opts.(flds{i}));
+            else
+                fprintf('更新参数[%s] : 旧值= %g -> 新值=%g\n',flds{i},oldvalue,opts.(flds{i}));
+            end
+        else
+            % X/Y 等无关参数不拷入 opts
+        end
     end
 
 
@@ -79,7 +100,63 @@ function result = my_flitter(csvPath,options)
     result.row_de_num    = row_de_num;
     result.output_re_num = row_de_num;
 
+end
 
+%% =========================================================================
+%  批量处理文件夹内所有 .csv 文件（覆盖写入原文件）
+% =========================================================================
+function result = batchProcess(dirPath, options)
+    files = dir(fullfile(dirPath, '*.csv'));
+    if isempty(files)
+        error('文件夹 %s 中没有 CSV 文件', dirPath);
+    end
+    fprintf('===== 批量处理文件夹: %s =====\n', dirPath);
+    fprintf('找到 %d 个 CSV 文件\n\n', length(files));
+
+    result = struct('file', {}, 'output_path', {}, 'data', {}, ...
+        'row_raw_num', {}, 'row_de_num', {}, 'output_re_num', {});
+    nRaw = 0;
+    for i = 1:length(files)
+        csvPath = fullfile(dirPath, files(i).name);
+        fprintf('--- [%d/%d] %s ---\n', i, length(files), files(i).name);
+
+        % 跳过已过滤的文件（不含 "U1:" 原始列名的都不是 raw 格式）
+        if ~isRawFormat(csvPath)
+            fprintf('  ↪ 跳过（已是过滤后格式）\n\n');
+            continue;
+        end
+
+        % 构建覆盖选项: output 直接指向原文件位置
+        [~, nameOnly] = fileparts(csvPath);
+        batchOpts = options;
+        batchOpts.output_dir = dirPath;
+        batchOpts.output_name = nameOnly;  % 同名覆盖
+
+        try
+            r = processOneFile(csvPath, batchOpts);
+            r.file = files(i).name;
+            result(end+1) = r;
+            nRaw = nRaw + 1;
+            fprintf('  ✓ 完成\n\n');
+        catch ME
+            warning('  ✗ 失败: %s\n\n', ME.message);
+        end
+    end
+    fprintf('===== 批量处理完成: 处理 %d 个原始文件, %d 个跳过(已过滤) =====\n', ...
+        nRaw, length(files) - nRaw);
+end
+
+function isRaw = isRawFormat(csvPath)
+% 快速检测CSV是否为原始格式（第一行数字header，第二行包含U1:等原始列名）
+    isRaw = false;
+    fid = fopen(csvPath, 'r');
+    if fid == -1, return; end
+    fgetl(fid);  % 跳过第1行
+    headerline = fgetl(fid);
+    fclose(fid);
+    if ischar(headerline) && contains(headerline, 'U1:')
+        isRaw = true;
+    end
 end
 
 function [data,colNames] = loadRawCsv(csvPath)
